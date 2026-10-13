@@ -5,13 +5,14 @@
 <h1 align="center">MinuteShelf</h1>
 
 <p align="center"><strong>Meetings, kept in context.</strong></p>
-<p align="center">A macOS meeting recorder with local speech recognition, optional AI analysis,<br>and a place for every recording, document, and note.</p>
+<p align="center">A local-first, bot-free meeting recorder for macOS.<br>Your recordings stay on your Mac. You choose where AI runs.</p>
 
 <p align="center">
-  <strong>macOS 15+</strong> · <strong>Apple Silicon</strong> · <strong>MIT</strong> · <strong>Development preview</strong>
+  <strong>Local first</strong> · <strong>No meeting bot</strong> · <strong>macOS 15+</strong> · <strong>Apple Silicon</strong> · <strong>MIT</strong>
 </p>
 
 <p align="center">
+  <a href="https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.10">Download for Mac</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#a-quick-look">Screenshots</a> ·
   <a href="#choose-your-models">Models</a> ·
@@ -22,7 +23,11 @@
 
 MinuteShelf keeps the original meeting on your Mac, then helps you revisit it with transcripts, selected screen images, and notes linked to their sources. Group related meetings into projects and keep the background documents beside the conversation.
 
-**Status:** 0.1.9 development preview. The current app, bundle, and data directory retain the earlier **Meeting Archive** name; a coordinated app-identity migration is still pending. Recording and playback have passed bounded real-world tests. Analysis adapters are implemented, with accuracy and real cloud-account validation still in progress.
+**No extra participant. No Zoom integration to authorize.** MinuteShelf records the window or display and audio sources you select on your Mac. It does not join the meeting, invite a recording bot, require a Zoom plugin, or ask you to connect your Zoom account. macOS screen/microphone permissions and your meeting's recording policy still apply.
+
+**Privacy by default, model choice by task.** Capture and storage are local. Use local models for local inference, or explicitly allow a remote provider for STT, VLM, or LLM work. Remote analysis sends only the content categories you approve; signing in or saving a model choice does not upload a meeting.
+
+**Status:** 0.1.10 development preview. The app is now **MinuteShelf**. Its legacy bundle identifier and storage path are retained so existing Meeting Archive installations can keep their data and credential scope. Recording and playback have passed bounded real-world tests. Analysis adapters are implemented, with accuracy and real cloud-account validation still in progress.
 
 ## Record once. Choose how to understand it.
 
@@ -34,7 +39,7 @@ Capture stays local. After the meeting, choose a **speech model (STT)**, a **vis
 
 ## A quick look
 
-Current interface, still named **Meeting Archive**, using an isolated synthetic demo. Transcript and summary examples are fixtures, not results from a real meeting or a model-quality benchmark. Click a screenshot to view it at full size.
+Current MinuteShelf interface using an isolated synthetic demo. Transcript and summary examples are fixtures, not results from a real meeting or a model-quality benchmark. Click a screenshot to view it at full size.
 
 <table>
   <tr>
@@ -49,6 +54,7 @@ Current interface, still named **Meeting Archive**, using an isolated synthetic 
 
 ## Why MinuteShelf?
 
+- **Keep the meeting participant list unchanged.** Capture on your Mac without adding a bot, connecting your Zoom account, or installing a Zoom integration.
 - **Keep the original.** Save the selected window or display, microphone, and system audio locally. Analysis can be retried without overwriting the recording.
 - **Record first. Analyze later.** The Swift recorder runs separately from the interface and analysis workers. Heavy AI work happens after the meeting.
 - **Follow a note back to its source.** Review transcript and screen references on the meeting timeline. Missing video remains a visible gap.
@@ -68,6 +74,14 @@ Closing the app window leaves recording running. Quitting asks to stop and save.
 
 ## Get started
 
+### Download and install
+
+Download the [Apple Silicon DMG](https://github.com/infinitywings/minuteshelf/releases/download/v0.1.10/MinuteShelf-0.1.10-macOS-arm64.dmg), open it, and drag **MinuteShelf** into **Applications**. A ZIP and SHA-256 checksums are available on the [release page](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.10). Requires an M-series Mac and macOS 15+; Node.js and Codex are included.
+
+This development preview is **ad-hoc signed, without Apple notarization**. macOS may block the first launch; if you trust the downloaded copy, use **System Settings → Privacy & Security → Open Anyway**. You do not need to disable Gatekeeper.
+
+**Upgrading from Meeting Archive:** stop and save recordings, quit the old app, and move the old **Meeting Archive.app** out of Applications before installing **MinuteShelf.app**. Keep the data folder. Both names use the same bundle identifier, so avoid leaving two launchable copies in Applications. Recheck screen and microphone permissions in the new app; an enabled system toggle alone does not prove access survived an update. See the [installation and permission guide](docs/INSTALL.md).
+
 ### Build the macOS app
 
 You need an **Apple Silicon Mac**, **macOS 15 or later**, **Xcode Command Line Tools**, and **Node.js 20+**.
@@ -86,7 +100,7 @@ npm run build:app
 npm run start:app
 ```
 
-The vendor commands download and verify pinned runtimes. The build produces `.build/Meeting Archive.app`, including the native helpers, Node backend, and Codex runtime. There are currently no external npm dependencies to install.
+The vendor commands download and verify pinned runtimes. The build produces `.build/MinuteShelf.app`, including the native helpers, Node backend, and Codex runtime. There are currently no external npm dependencies to install.
 
 To create a local DMG and ZIP:
 
@@ -94,7 +108,7 @@ To create a local DMG and ZIP:
 npm run package:app
 ```
 
-Open the resulting DMG in `dist/` and drag **Meeting Archive** to **Applications**. Current builds use ad-hoc signing and are **not Apple-notarized**. After rebuilding or replacing the app, recheck recording access inside the installed app; macOS may require renewed permission.
+Open the resulting DMG in `dist/` and drag **MinuteShelf** to **Applications**. Current builds use ad-hoc signing and are **not Apple-notarized**. After rebuilding or replacing the app, recheck recording access inside the installed app; macOS may require renewed permission.
 
 The app requests screen/system-audio access and, when enabled, microphone access. Accessibility permission is not required by the current recorder. Inform participants before recording and follow the meeting's policy.
 
@@ -147,11 +161,13 @@ Original recordings are retained by default. Analysis runs and exports have sepa
 
 ## Privacy and control
 
-The archive service binds to `127.0.0.1` with access-token and Host/Origin checks. Recording does not require cloud AI. Model installation and remote analysis are explicit actions, with content categories and destinations reviewed before analysis starts.
+MinuteShelf records from your Mac; it does not join Zoom as a participant or use a Zoom account integration to record. The capture path requires macOS permissions, with no Zoom OAuth, plugin, or bot invitation to configure.
+
+The archive service binds to `127.0.0.1` with access-token and Host/Origin checks. Recording does not require cloud AI or a MinuteShelf cloud account. Model installation and remote analysis are explicit actions, with content categories and destinations reviewed before analysis starts.
 
 Choosing a remote provider sends the approved content to that provider. Choosing local providers keeps inference local after their dependencies and models are installed. The archive service does not expose an MCP endpoint. Optional RKA access is read-only, and selected RKA content is subject to the same analysis upload choices as other background documents.
 
-The default archive is outside the repository and common cloud-sync folders. Your own backup or synchronization settings still determine where copies may go.
+The default archive is outside the repository and common cloud-sync folders. Your own backup or synchronization settings still determine where copies may go. These are concrete privacy controls, not a promise that choosing a cloud provider keeps the approved data on your device.
 
 ## Capture support
 
@@ -177,7 +193,8 @@ The [workflow diagram](docs/assets/minuteshelf-workflow.svg) is an editable SVG.
 - [ ] Adaptive visual indexing, OCR/region crops, and better handling of brief or small changes.
 - [ ] Email/document connectors, cross-meeting AI project summaries, and task tracking.
 - [ ] Cross-device sharing tests, long recordings, audio/video sync, and recovery acceptance.
-- [ ] Developer ID signing, notarization, and a public release process.
+- [x] Downloadable DMG/ZIP development previews with checksums and an upgrade guide.
+- [ ] Developer ID signing and Apple notarization.
 
 An implemented adapter is not a model-quality guarantee. Provider protocol tests use local test services; real account access and representative meeting quality still need separate validation.
 

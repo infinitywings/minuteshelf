@@ -1,6 +1,6 @@
 // Exercise the actual authenticated HTTP routes, native media helpers and HTTP
 // provider adapters with fabricated pixels/audio and loopback model fixtures.
-// Usage: node tools/test-analysis-e2e.mjs [--app '/path/Meeting Archive.app']
+// Usage: node tools/test-analysis-e2e.mjs [--app '/path/MinuteShelf.app']
 // No screen/microphone capture, user archives, Keychain or cloud credentials.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -17,7 +17,7 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const args = process.argv.slice(2);
 assert.ok(!args.length || args.length === 2 && args[0] === '--app', 'Usage: test-analysis-e2e.mjs [--app <bundle>]');
 assert.equal(process.platform, 'darwin', 'The native media validation requires macOS.');
-const app = path.resolve(args[1] || path.join(root, '.build', 'Meeting Archive.app'));
+const app = path.resolve(args[1] || path.join(root, '.build', 'MinuteShelf.app'));
 const packaged = path.join(app, 'Contents', 'Resources', 'runtime');
 const runtimeRoot = args.length ? packaged : root;
 const binaries = Object.fromEntries(['archivecap', 'analysis-media', 'archive-export'].map(name => [name, path.join(packaged, '.build', name)]));

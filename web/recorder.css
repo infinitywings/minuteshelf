@@ -1,4 +1,4 @@
-/* Meeting Archive uses system appearance and a restrained, opaque surface stack. */
+/* MinuteShelf uses system appearance and a restrained, opaque surface stack. */
 /* The installed app supplies the native sidebar/library and active controls.
    Keep the browser entry intact; hidden elements still belong to one controller. */
 body.native-shell { display:block; min-width:0; }

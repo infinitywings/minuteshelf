@@ -57,7 +57,7 @@ function authorize(config, settings, kinds) {
 }
 function readCredential({ config, dataDirectory, signal, operation = 'read', binary = path.resolve(__dirname, '../../../Helpers/analysis-credentials'), spawnProcess = spawn }) {
   if (!['api-key', 'claude-code-oauth-token'].includes(config.authentication)) return Promise.resolve(operation === 'status' ? { stored: false, required: false } : undefined);
-  if (!fs.existsSync(binary)) return Promise.reject(fail('The credential helper is missing. Install the complete Meeting Archive app.'));
+  if (!fs.existsSync(binary)) return Promise.reject(fail('The credential helper is missing. Install the complete MinuteShelf app.'));
   return new Promise((resolve, reject) => {
     let output = '', closed = false;
     const child = spawnProcess(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } });

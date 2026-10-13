@@ -7,13 +7,14 @@ import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { validateBundleContents, validateBundlePlist, validateAppSignature } from './bundle-policy.mjs';
 
 const repository = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const systemPath = '/usr/bin:/bin';
 const magicNumbers = new Set([0xfeedface, 0xcefaedfe, 0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca]);
 
 export function parseArguments(argv, base = repository) {
-  const options = { app:path.join(base, '.build', 'Meeting Archive.app'), report:path.join(base, '.build', 'reports', 'standalone-validation.json'), timeoutMs:90000 };
+  const options = { app:path.join(base, '.build', 'MinuteShelf.app'), report:path.join(base, '.build', 'reports', 'standalone-validation.json'), timeoutMs:90000 };
   let explicitApp = false;
   for (let index = 0; index < argv.length; index++) {
     const argument = argv[index];
@@ -157,15 +158,17 @@ function inspectMachO(bundle) {
     return { file:file.relative, sha256:sha256(file.absolute), rpaths, dependencies, signatureValid:true };
   });
 }
-function signatureDetails(bundle) {
+function signatureDetails(bundle, information) {
   runTool('/usr/bin/codesign', ['--verify','--deep','--strict',bundle]);
   const output = runTool('/usr/bin/codesign', ['--display','--verbose=4',bundle]);
   const display = output.stdout + output.stderr;
+  const requirements = runTool('/usr/bin/codesign', ['--display','-r-',bundle]);
+  const identity = validateAppSignature(display, requirements.stdout + requirements.stderr, information);
   const authorities = [...display.matchAll(/^Authority=(.+)$/gm)].map(match => match[1]);
   const adhoc = /^Signature=adhoc$/m.test(display), developerID = authorities.some(authority => authority.startsWith('Developer ID Application:'));
   const stapler = runTool('/usr/bin/xcrun', ['--find','stapler'], { allowFailure:true });
   const ticket = stapler.status === 0 ? runTool(stapler.stdout.trim(), ['validate',bundle], { allowFailure:true }) : null;
-  return { valid:true, kind:adhoc ? 'ad-hoc' : developerID ? 'developer-id' : 'other', developerID, authorities,
+  return { valid:true, cdhash:identity.cdhash, designatedRequirementVerified:true, kind:adhoc ? 'ad-hoc' : developerID ? 'developer-id' : 'other', developerID, authorities,
     teamIdentifier:/^TeamIdentifier=(.+)$/m.exec(display)?.[1] || null,
     stapledTicket:ticket ? ticket.status === 0 : null,
     notarized:adhoc ? false : ticket?.status === 0 ? true : null,
@@ -247,19 +250,22 @@ export async function validateStandalone(options) {
       const mounted = mountDmg(options.dmg, mountpoint); sourceApp = mounted.app; report.dmg = mounted.verification;
     }
     assert(fs.statSync(sourceApp).isDirectory() && sourceApp.endsWith('.app'), 'App bundle not found');
-    const app = path.join(movedDirectory, 'Meeting Archive.app');
+    const app = path.join(movedDirectory, 'MinuteShelf.app');
     runTool('/usr/bin/ditto', [sourceApp, app], { timeout:60000 });
     const before = bundleSnapshot(app), sourceSnapshot = bundleSnapshot(fs.realpathSync(sourceApp));
     assert.deepEqual(before, sourceSnapshot, 'Copied app differs from the source bundle');
     report.relocatedApp = app; report.checks.relocatedBundleBytesMatch = true;
+    const inventory = validateBundleContents(app);
+    report.checks.onlyApprovedPayloadFiles = true;
     const plist = readPlist(path.join(app, 'Contents', 'Info.plist'));
-    assert.equal(plist.CFBundleExecutable, 'MeetingArchive');
+    validateBundlePlist(plist, inventory.information);
+    report.checks.publicNameAndCompatibleIdentity = true;
     const binary = path.join(app, 'Contents', 'MacOS', plist.CFBundleExecutable), node = path.join(app, 'Contents', 'Helpers', 'node'), codex = path.join(app, 'Contents', 'Helpers', 'codex');
     for (const required of [binary, node, codex, path.join(app, 'Contents', 'Resources', 'runtime', 'tools', 'desktop-server.js')]) assert(fs.existsSync(required), `Missing bundled runtime: ${required}`);
     report.bundle = { identifier:plist.CFBundleIdentifier, version:plist.CFBundleShortVersionString, minimumMacOS:plist.LSMinimumSystemVersion, distribution:plist.MeetingArchiveDistribution || null };
     report.machO = inspectMachO(app); assert(report.machO.length >= 5, 'Expected app, Node, Codex, recorder and exporter Mach-O binaries');
     report.checks.allMachODependenciesBundledOrSystem = true;
-    report.signing = signatureDetails(app); report.checks.signatureValid = true;
+    report.signing = signatureDetails(app, inventory.information); report.checks.signatureValid = true;
     const environment = cleanEnvironment(data, processTemp);
     report.node = JSON.parse(runTool(node, ['-e','console.log(JSON.stringify({version:process.version,execPath:process.execPath,architecture:process.arch}))'], { env:environment, cwd:emptyCwd }).stdout);
     assert.equal(fs.realpathSync(report.node.execPath), fs.realpathSync(node)); report.checks.bundledNodeExecutes = true;
@@ -327,7 +333,7 @@ export async function validateStandalone(options) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const options = parseArguments(process.argv.slice(2));
-    if (options.help) console.log('Usage: node tools/test-standalone.mjs [--app /path/Meeting Archive.app | --dmg /path/image.dmg] [--report /path/report.json] [--timeout-ms 90000]\nRequires macOS GUI access and validation tools. Uses only isolated temporary data; never captures media or requests capture permission.');
+    if (options.help) console.log('Usage: node tools/test-standalone.mjs [--app /path/MinuteShelf.app | --dmg /path/image.dmg] [--report /path/report.json] [--timeout-ms 90000]\nRequires macOS GUI access and validation tools. Uses only isolated temporary data; never captures media or requests capture permission.');
     else {
       const report = await validateStandalone(options);
       console.log(JSON.stringify({ status:report.status, report:options.report, checks:report.checks, signing:report.signing, error:report.error, cleanupError:report.cleanupError }, null, 2));

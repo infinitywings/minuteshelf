@@ -74,7 +74,7 @@ class ArchiveStore {
       segments: [], gaps: [], interruptedTail: [], audioScope: selection.systemAudio ? 'all-system' : 'disabled' };
     this.save(manifest);
     atomicWrite(path.join(this.dir(id), 'user_notes.md'), '');
-    atomicWrite(path.join(this.dir(id), 'README.md'), `# ${manifest.title.replace(/[\r\n]/g, ' ')}\n\nMeeting ID: ${id}\n\nraw/: Original media; context/: Background documents and RKA; outputs/: Generated content; exports/: Video with audio and audio exports; user_notes.md: Your notes.\n`);
+    atomicWrite(path.join(this.dir(id), 'README.md'), `# ${manifest.title.replace(/[\r\n]/g, ' ')}\n\nMinuteShelf meeting ID: ${id}\n\nraw/: Original media; context/: Background documents and RKA; outputs/: Generated content; exports/: Video with audio and audio exports; user_notes.md: Your notes.\n`);
     return manifest;
   }
   ids() {

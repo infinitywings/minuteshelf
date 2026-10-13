@@ -48,7 +48,7 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func start(node: URL, entry: URL, dataDirectory: URL) async throws -> LocalConnection {
         guard child == nil else { throw appFailure("The local service is already running.") }
         guard FileManager.default.isExecutableFile(atPath: node.path) else {
-            throw appFailure("Meeting Archive’s bundled runtime is missing or cannot be executed. Reinstall the app.")
+            throw appFailure("MinuteShelf’s bundled runtime is missing or cannot be executed. Reinstall the app.")
         }
         let process = Process(); child = process
         process.executableURL = node; process.arguments = [entry.path]
@@ -89,7 +89,7 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
                 try? await Task.sleep(nanoseconds: 25_000_000_000)
                 guard !Task.isCancelled, let self, let pending = self.pendingReady else { return }
                 self.pendingReady = nil
-                pending.resume(throwing: appFailure("The local service timed out while starting. Restart Meeting Archive. If this continues, reinstall the app."))
+                pending.resume(throwing: appFailure("The local service timed out while starting. Restart MinuteShelf. If this continues, reinstall the app."))
             }
         }
     }
@@ -175,17 +175,18 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
             guard let self, !self.quitting else { return }
             self.window.subtitle = "Local service stopped"
             self.nativeShell.setInteractionEnabled(false)
-            self.alert("Local service stopped", "Recording status cannot be checked or stopped from this window. The independent recorder is unchanged. Use its menu bar controls to stop and save.\n\nUnsaved notes remain in this window but cannot currently be saved. When you choose Quit Meeting Archive, you can copy your notes or keep the window open.")
+            self.alert("Local service stopped", "Recording status cannot be checked or stopped from this window. The independent recorder is unchanged. Use its menu bar controls to stop and save.\n\nUnsaved notes remain in this window but cannot currently be saved. When you choose Quit MinuteShelf, you can copy your notes or keep the window open.")
         }
         launchTask = Task { [weak self] in
             guard let self else { return }
             do {
                 guard let resource = Bundle.main.resourceURL else {
-                    throw appFailure("Meeting Archive is missing required resources. Reinstall the app.")
+                    throw appFailure("MinuteShelf is missing required resources. Reinstall the app.")
                 }
                 let node = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/node")
                 let override = ProcessInfo.processInfo.environment["MEETING_DATA"]
                 if self.smoke && override == nil { throw appFailure("--smoke-test requires a separate MEETING_DATA test directory.") }
+                // Keep the pre-rebrand archive path: credential scopes also hash this directory.
                 let directory = override.map { URL(fileURLWithPath: $0, isDirectory: true) }
                     ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Meeting Archive", isDirectory: true)
                 self.nativeShell.setDataDirectory(directory)
@@ -199,7 +200,7 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
             } catch {
                 self.window.subtitle = "Could not start the local service"
                 if self.smoke { self.finishSmoke(error: error) }
-                else { self.alert("Could not start Meeting Archive", error.localizedDescription) }
+                else { self.alert("Could not start MinuteShelf", error.localizedDescription) }
             }
         }
     }
@@ -217,7 +218,7 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
         web.allowsBackForwardNavigationGestures = false
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1120, height: 780),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Meeting Archive"; window.subtitle = "Starting the local service…"
+        window.title = "MinuteShelf"; window.subtitle = "Starting the local service…"
         window.contentMinSize = NSSize(width: 720, height: 500)
         window.isReleasedWhenClosed = false; window.delegate = self
         nativeShell = MeetingArchiveShell(web: web, window: window)
@@ -237,17 +238,17 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
             let entry = NSMenuItem(title: title, action: nil, keyEquivalent: ""), submenu = NSMenu(title: title)
             entry.submenu = submenu; bar.addItem(entry); return submenu
         }
-        let app = menu("Meeting Archive")
-        item(app, "About Meeting Archive", #selector(about), target: self)
+        let app = menu("MinuteShelf")
+        item(app, "About MinuteShelf", #selector(about), target: self)
         app.addItem(.separator()); item(app, "Settings…", #selector(settings), ",", target: self)
         app.addItem(.separator())
         let services = NSMenu(title: "Services"), serviceItem = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         serviceItem.submenu = services; app.addItem(serviceItem); NSApp.servicesMenu = services
         app.addItem(.separator())
-        item(app, "Hide Meeting Archive", #selector(NSApplication.hide(_:)), "h", target: NSApp)
+        item(app, "Hide MinuteShelf", #selector(NSApplication.hide(_:)), "h", target: NSApp)
         item(app, "Hide Others", #selector(NSApplication.hideOtherApplications(_:)), "h", target: NSApp).keyEquivalentModifierMask = [.command, .option]
         item(app, "Show All", #selector(NSApplication.unhideAllApplications(_:)), target: NSApp)
-        app.addItem(.separator()); item(app, "Quit Meeting Archive", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
+        app.addItem(.separator()); item(app, "Quit MinuteShelf", #selector(NSApplication.terminate(_:)), "q", target: NSApp)
         let file = menu("File")
         item(file, "New Meeting", #selector(newMeeting), "n", target: self)
         item(file, "Save Notes", #selector(save), "s", target: self)
@@ -266,10 +267,10 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
         let windows = menu("Window"); NSApp.windowsMenu = windows
         item(windows, "Minimize", #selector(NSWindow.performMiniaturize(_:)), "m")
         item(windows, "Zoom", #selector(NSWindow.performZoom(_:)))
-        item(windows, "Show Meeting Archive", #selector(showWindow(_:)), target: self)
+        item(windows, "Show MinuteShelf", #selector(showWindow(_:)), target: self)
         windows.addItem(.separator()); item(windows, "Bring All to Front", #selector(NSApplication.arrangeInFront(_:)), target: NSApp)
         let helpMenu = menu("Help"); NSApp.helpMenu = helpMenu
-        item(helpMenu, "Meeting Archive Help", #selector(help), target: self)
+        item(helpMenu, "MinuteShelf Help", #selector(help), target: self)
     }
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(newMeeting) { return ready && !quitting && !closingWindow && nativeShell.snapshot?.activeRecording == nil && nativeShell.snapshot?.busy != true }
@@ -289,11 +290,11 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
     @objc private func about() {
         let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
-        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "Meeting Archive", .applicationVersion: version,
+        NSApp.orderFrontStandardAboutPanel(options: [.applicationName: "MinuteShelf", .applicationVersion: version,
             .credits: NSAttributedString(string: "Local meeting recording and archives\nThe runtime is included.\n" + distributionDescription)])
     }
     @objc private func help() {
-        alert("Meeting Archive Help", "Choose Window or Entire display and confirm its preview before recording. Entire display includes other visible apps and notifications. When presenting in Zoom, choose the actual shared content window or the display; capture does not automatically follow Zoom's shared source. Closing this window keeps the menu bar recorder running. Quitting the app stops and safely saves the recording first.\n\nMicrophone recording is controlled separately from the meeting app’s mute setting. Follow the recording page to grant permissions on first use. The runtime is included in the app.\n\n" + distributionDescription)
+        alert("MinuteShelf Help", "Choose Window or Entire display and confirm its preview before recording. Entire display includes other visible apps and notifications. When presenting in Zoom, choose the actual shared content window or the display; capture does not automatically follow Zoom's shared source. Closing this window keeps the menu bar recorder running. Quitting the app stops and safely saves the recording first.\n\nMicrophone recording is controlled separately from the meeting app’s mute setting. Use Settings → General to request and check access, including after updates. The runtime is included in the app.\n\nUpgrading from Meeting Archive preserves your local archive and connection settings. macOS may still show the former name and may require renewed screen, microphone, or Keychain consent when an ad hoc signature changes. Check access in this installed app before recording. MinuteShelf never resets system permissions automatically.\n\n" + distributionDescription)
     }
     @objc func showWindow(_ sender: Any?) { window?.makeKeyAndOrderFront(sender); NSApp.activate(ignoringOtherApps: true) }
     @objc private func newMeeting() { guard nativeShell.snapshot?.activeRecording == nil else { return }; perform("new") }
@@ -548,7 +549,7 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
     private func finishSmoke(error: Error) {
         smokeFinished = true
-        Task { try? await server.shutdown(); fputs("Meeting Archive smoke test: \(error.localizedDescription)\n", stderr); exit(2) }
+        Task { try? await server.shutdown(); fputs("MinuteShelf smoke test: \(error.localizedDescription)\n", stderr); exit(2) }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         if smoke { finishSmoke(error: error) } else { alert("Could not open the meeting interface", error.localizedDescription) }

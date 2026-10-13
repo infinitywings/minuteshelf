@@ -48,12 +48,12 @@ private enum CodexConnectionError: LocalizedError {
     case unavailable, storage, launch, stopped, timeout, protocolError, rejected, browser, catalogBusy, catalogMalformed, catalogUnavailable
     var errorDescription: String? {
         switch self {
-        case .unavailable: return "The bundled Codex runtime is missing. Reinstall Meeting Archive."
+        case .unavailable: return "The bundled Codex runtime is missing. Reinstall MinuteShelf."
         case .storage: return "Codex needs a private local settings folder. Check this app's storage permissions."
-        case .launch: return "Codex could not start. Reinstall Meeting Archive and try again."
+        case .launch: return "Codex could not start. Reinstall MinuteShelf and try again."
         case .stopped: return "The Codex connection stopped. Try Connect Codex again."
         case .timeout: return "Codex did not respond in time. Check your connection and try again."
-        case .protocolError: return "Codex returned an unexpected response. Reconnect or update Meeting Archive."
+        case .protocolError: return "Codex returned an unexpected response. Reconnect or update MinuteShelf."
         case .rejected: return "Codex could not complete this request. Check your connection and macOS Keychain access, then retry."
         case .browser: return "The sign-in browser could not open. Use Open Browser to try again."
         case .catalogBusy: return "Wait for the current Codex account or model request to finish, then refresh models."
@@ -181,7 +181,7 @@ private enum CodexConnectionError: LocalizedError {
             try self.ensureActive(token)
             guard result["account"] is NSNull else { throw CodexConnectionError.protocolError }
             self.clearAccount(); self.state = .idle
-            self.detail = "Disconnected from Meeting Archive. Your other Codex apps are unchanged."
+            self.detail = "Disconnected from MinuteShelf. Your other Codex apps are unchanged."
             self.closeProcess()
         }
     }
@@ -343,7 +343,7 @@ private enum CodexConnectionError: LocalizedError {
             self.state = .failed; self.detail = CodexConnectionError.stopped.localizedDescription; self.changed()
         } }
         do { try process.run() } catch { closeProcess(); throw CodexConnectionError.launch }
-        _ = try await request("initialize", ["clientInfo": ["name": "meeting_archive", "title": "Meeting Archive", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.2"], "capabilities": ["experimentalApi": false]])
+        _ = try await request("initialize", ["clientInfo": ["name": "meeting_archive", "title": "MinuteShelf", "version": Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.1.2"], "capabilities": ["experimentalApi": false]])
         try send(["method": "initialized"])
     }
     private func request(_ method: String, _ params: [String: Any]) async throws -> [String: Any] {

@@ -89,7 +89,7 @@ func capturePermissions() -> [String: String] {
 }
 func requireScreenPermission() throws {
     guard CGPreflightScreenCaptureAccess() else {
-        throw failure("Screen recording permission is required. Use Grant screen recording, then enable the recorder or its launching app in System Settings > Privacy & Security > Screen & System Audio Recording. Restart the local recorder service if macOS requests it.")
+        throw failure("Screen recording access is not available to this app. Use Grant screen recording, then enable MinuteShelf (or its launching app in development) in System Settings > Privacy & Security > Screen & System Audio Recording. After an update, macOS may still show Meeting Archive and require renewed consent. Restart if macOS asks, then check access again in MinuteShelf.")
     }
 }
 
@@ -657,7 +657,8 @@ final class ArchiveCapture: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         let warning = videoWarning
         DispatchQueue.main.async {
             self.controls?.item.button?.title = title
-            self.controls?.item.button?.toolTip = warning.isEmpty ? nil : warning
+            self.controls?.item.button?.setAccessibilityLabel("MinuteShelf: " + title)
+            self.controls?.item.button?.toolTip = warning.isEmpty ? "MinuteShelf recording controls" : "MinuteShelf: " + warning
         }
     }
     func control(_ object: [String: Any]) throws {
@@ -937,8 +938,12 @@ final class RecorderControls: NSObject {
         item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         super.init()
         item.button?.title = "◌ Preparing to Record"
+        item.button?.toolTip = "MinuteShelf recording controls"
+        item.button?.setAccessibilityLabel("MinuteShelf: Preparing to Record")
         let menu = NSMenu()
         menu.autoenablesItems = false
+        let heading = NSMenuItem(title: "MinuteShelf", action: nil, keyEquivalent: "")
+        heading.isEnabled = false; menu.addItem(heading); menu.addItem(.separator())
         for (title, action, key) in [("Toggle Microphone Recording", #selector(toggleMic), "m"),
                                      ("Pause / Resume All Recording", #selector(togglePause), "p"),
                                      ("Stop and Save", #selector(stop), "s")] {

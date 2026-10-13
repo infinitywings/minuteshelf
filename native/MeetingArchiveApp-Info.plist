@@ -2,8 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleIdentifier</key><string>local.meetingarchive.app</string>
-  <key>CFBundleName</key><string>Meeting Archive</string>
-  <key>CFBundleDisplayName</key><string>Meeting Archive</string>
+  <key>CFBundleName</key><string>MinuteShelf</string>
+  <key>CFBundleDisplayName</key><string>MinuteShelf</string>
   <key>CFBundleExecutable</key><string>MeetingArchive</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleVersion</key><string>0.1.0</string>

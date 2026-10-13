@@ -391,7 +391,7 @@ async function refresh() {
   $('connection').classList.toggle('recording', status.active.length > 0);
   $('storage').textContent = `${(status.freeBytes / 1e9).toFixed(1)} GB free`;
   $('storage').title = status.archivePath; archiveRoot = status.archivePath; $('settings-archive-path').textContent = archiveRoot;
-  if (!status.nativeBuilt) showMessage(nativeShell ? 'The recorder helper is missing. Reinstall Meeting Archive.' : 'The recorder helper is not built. Run npm run build:native in the project folder.');
+  if (!status.nativeBuilt) showMessage(nativeShell ? 'The recorder helper is missing. Reinstall MinuteShelf.' : 'The recorder helper is not built. Run npm run build:native in the project folder.');
   const visibleMeetings = meetings.filter(m => !projectFilter || m.projectId === projectFilter);
   updateList('meetings', visibleMeetings.map(m => [m.id, m.title, m.createdAt, m.status]), root => {
     root.replaceChildren();

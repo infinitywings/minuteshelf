@@ -5,10 +5,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { appIdentity, binaryFiles, validateBundleContents, validateBundlePlist, validateAppSignature } from './bundle-policy.mjs';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const build = path.join(root, '.build'), dist = path.join(root, 'dist');
-const app = path.join(build, 'Meeting Archive.app');
+const app = path.join(build, appIdentity.bundleName);
 function run(command, args, capture = false) {
   const result = spawnSync(command, args, { encoding: 'utf8', stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit' });
   if (result.error) throw result.error;
@@ -23,23 +24,31 @@ async function sha256(file) {
   for await (const chunk of fs.createReadStream(file)) hash.update(chunk);
   return hash.digest('hex');
 }
+function signatureOutput(target, arguments_) {
+  const result = spawnSync('/usr/bin/codesign', ['--display', ...arguments_, target], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error('Could not inspect the signed application');
+  return `${result.stdout}\n${result.stderr}`;
+}
+function checkSignature(target, information) {
+  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', target]);
+  return validateAppSignature(signatureOutput(target, ['--verbose=4']), signatureOutput(target, ['-r-']), information);
+}
 if (process.platform !== 'darwin') throw new Error('DMG packaging requires macOS.');
 assertNoBuild();
 const infoFile = path.join(app, 'Contents', 'Resources', 'build-info.json');
 if (!fs.existsSync(infoFile)) throw new Error('Build the self-contained app first with npm run build:app.');
-const information = JSON.parse(fs.readFileSync(infoFile, 'utf8'));
+const packageVersion = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
+const inventory = validateBundleContents(app, { expectedVersion: packageVersion });
+const information = inventory.information;
 const { version } = information;
-if (!/^\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?$/.test(version) || information.architecture !== 'arm64') throw new Error('Invalid app build metadata.');
-if (!['adhoc', 'developer-id'].includes(information.signing?.kind) || information.signing.notarization !== 'not-submitted') {
-  throw new Error('Unknown distribution state. This script packages builds that have not been notarized.');
-}
-const bundleVersion = run('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', path.join(app, 'Contents', 'Info.plist')], true);
-if (bundleVersion !== version) throw new Error('The app version and build metadata differ; rebuild before packaging.');
-for (const relative of ['Contents/Helpers/node', 'Contents/Helpers/codex', 'Contents/Resources/runtime/.build/archivecap', 'Contents/Resources/runtime/.build/archive-export']) {
+validateBundlePlist(JSON.parse(run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(app, 'Contents', 'Info.plist')], true)), information);
+for (const relative of binaryFiles) {
   if (!fs.lstatSync(path.join(app, relative)).isFile()) throw new Error(`Missing bundled runtime: ${relative}`);
   run('/usr/bin/codesign', ['--verify', '--strict', path.join(app, relative)]);
 }
-run('/usr/bin/codesign', ['--verify', '--deep', '--strict', app]);
+const sourceSignature = checkSignature(app, information);
+const sourceHashes = await Promise.all(inventory.files.map(async file => [file, await sha256(path.join(app, file))]));
 fs.mkdirSync(dist, { recursive: true });
 const lockPath = path.join(build, 'app-package.lock');
 let lock;
@@ -47,29 +56,80 @@ try { lock = fs.openSync(lockPath, 'wx', 0o600); }
 catch (error) { if (error.code === 'EEXIST') throw new Error('Another package job may be running. Check .build/app-package.lock before retrying.'); throw error; }
 fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }) + '\n');
 const staging = fs.mkdtempSync(path.join(build, 'package-staging-'));
-const basename = `Meeting-Archive-${version}-macOS-arm64`;
+const basename = `MinuteShelf-${version}-macOS-arm64`;
 const imageRoot = path.join(staging, 'image');
-const packageApp = path.join(imageRoot, 'Meeting Archive.app');
+const packageApp = path.join(imageRoot, appIdentity.bundleName);
 try {
   fs.mkdirSync(imageRoot);
   run('/usr/bin/ditto', [app, packageApp]);
   assertNoBuild();
   // A complete build can finish between our first metadata read and ditto.
   // A valid signature alone does not establish that it is the same build.
-  const copiedInformation = JSON.parse(fs.readFileSync(path.join(packageApp, 'Contents', 'Resources', 'build-info.json'), 'utf8'));
-  const copiedVersion = run('/usr/bin/plutil', ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', path.join(packageApp, 'Contents', 'Info.plist')], true);
-  if (JSON.stringify(copiedInformation) !== JSON.stringify(information) || copiedVersion !== version) {
+  const copiedInventory = validateBundleContents(packageApp, { expectedVersion: version });
+  validateBundlePlist(JSON.parse(run('/usr/bin/plutil', ['-convert', 'json', '-o', '-', path.join(packageApp, 'Contents', 'Info.plist')], true)), information);
+  const copiedHashes = await Promise.all(copiedInventory.files.map(async file => [file, await sha256(path.join(packageApp, file))]));
+  if (JSON.stringify(copiedInventory.information) !== JSON.stringify(information) || JSON.stringify(copiedHashes) !== JSON.stringify(sourceHashes)) {
     throw new Error('The app changed while packaging. Retry after the build finishes; no release files were replaced.');
   }
-  run('/usr/bin/codesign', ['--verify', '--deep', '--strict', packageApp]);
+  if (checkSignature(packageApp, information).cdhash !== sourceSignature.cdhash) throw new Error('The packaged signature differs from the source app');
   fs.symlinkSync('/Applications', path.join(imageRoot, 'Applications'));
   const signatureNote = information.signing.kind === 'adhoc'
-    ? 'This local build is ad-hoc signed. It is not Developer ID signed and has not been notarized by Apple.'
+    ? 'This preview is ad-hoc signed. It is not Developer ID signed and has not been notarized by Apple.'
     : 'This build is signed with a Developer ID Application certificate. Apple notarization has not been submitted.';
-  const instructions = `MEETING ARCHIVE ${version}\n\nREQUIREMENTS\nApple Silicon Mac (M-series), macOS 15 or later.\nNode.js and Codex are included. You do not need Homebrew, Node, Codex CLI, or a terminal to run the app.\n\nINSTALL\n1. Open the DMG and drag Meeting Archive into Applications.\n2. Eject the disk image, then open Meeting Archive from Applications.\n   If using the ZIP instead, unzip it and move Meeting Archive.app into Applications.\n3. When you create a meeting, grant the requested screen/system-audio permission.\n   Microphone permission is requested only if you enable microphone recording.\n   Accessibility permission is not required.\n\nCONNECT CODEX\nOpen Settings > Analysis > Connect Codex, then finish ChatGPT sign-in in your browser.\nUse Check Connection to read a saved sign-in. Disconnect removes this app's sign-in.\nCredentials use a separate macOS Keychain entry. Connecting does not upload meeting content.\nChoose providers and permitted sources in Settings > Analysis, then start analysis from a saved meeting. Local MLX transcription requires Python 3.11+ and an explicit model install. Claude Code requires its official native runtime. Saving preferences does not start analysis or upload content.\n\nSIGNING STATUS\n${signatureNote}\nIf macOS blocks this copy, review the warning and use System Settings > Privacy & Security > Open Anyway only if you trust this build. Do not disable Gatekeeper.\n\nYOUR RECORDINGS\nSaved by default in ~/Library/Application Support/Meeting Archive.\nEach meeting keeps its recordings, context documents, notes, and exports together.\nClosing the window leaves recording running in the menu bar. Quitting the app asks before stopping an active recording and waits for it to save.\nMicrophone recording is separate from the mute control in your meeting app.\n\nUPDATING\nStop and save recordings, quit Meeting Archive, then replace the app in Applications.\nReplacing the app does not delete your recordings. Permission prompts may recur after an ad-hoc rebuild.\n`;
+  const instructions = `MINUTESHELF ${version}
+
+REQUIREMENTS
+Apple Silicon Mac (M-series), macOS 15 or later.
+Node.js and Codex are included. No Homebrew, Node, Codex CLI, or terminal is required to launch the app.
+
+INSTALL
+1. Open the DMG and drag MinuteShelf into Applications.
+2. Eject the disk image, then open MinuteShelf from Applications.
+   For the ZIP, unzip it and move MinuteShelf.app into Applications.
+3. In Settings > General, request Screen & System Audio access.
+   Grant Microphone access if you want microphone recording.
+   Accessibility permission is not required.
+
+UPGRADING FROM MEETING ARCHIVE
+Stop and save recordings, then quit Meeting Archive normally.
+Move the old Meeting Archive.app out of Applications before installing MinuteShelf.app.
+Only move the application bundle: keep ~/Library/Application Support/Meeting Archive.
+The new filename does not automatically replace the old app. Keeping both apps installed
+with the same bundle identifier can confuse macOS launch and permission attribution.
+The bundle identifier, archive path, preferences and credential scopes are preserved.
+
+SIGNING AND PERMISSIONS
+${signatureNote}
+If macOS blocks this copy, review the warning and use System Settings > Privacy & Security > Open Anyway only if you trust this release. Do not disable Gatekeeper.
+Ad-hoc signatures change between builds. An existing privacy toggle can remain enabled
+while the updated app has no working grant. Install the final copy in Applications first,
+then use Settings > General > Request Access and check the permission status in the app.
+If macOS requests a restart, quit and reopen this installed copy before checking again.
+If it still says Not allowed, consult the release installation guide for a targeted reset.
+The installer never resets privacy grants, changes other apps' permissions, or modifies
+the signed app after installation. No automatic grant or permission continuity is promised.
+
+CONNECT AND ANALYZE
+Open Settings > Analysis > Connect Codex, then finish ChatGPT sign-in in your browser.
+Use Check Connection to check the saved sign-in. Disconnect removes this app's sign-in.
+Credentials use this app's macOS Keychain scope. Connecting does not upload meeting content.
+Choose providers and permitted sources in Settings > Analysis, then start analysis from a saved meeting.
+Local MLX transcription requires Python 3.11+ and explicit runtime/model installation.
+Claude Code requires its official native runtime. Saving preferences does not start analysis or uploads.
+
+YOUR RECORDINGS
+Saved by default in ~/Library/Application Support/Meeting Archive (legacy path retained).
+Each meeting keeps recordings, context documents, notes, and exports together.
+Closing the window leaves recording running in the menu bar. Quitting asks before stopping
+an active recording and waits for it to save. Microphone recording is separate from mute in your meeting app.
+
+FUTURE UPDATES
+Stop and save recordings, quit MinuteShelf, then replace MinuteShelf.app in Applications.
+Replacing the app does not delete your recordings. Check capture permission after an update.
+`;
   fs.writeFileSync(path.join(imageRoot, 'INSTALL.txt'), instructions);
   const dmg = path.join(staging, `${basename}.dmg`), zip = path.join(staging, `${basename}.zip`);
-  run('/usr/bin/hdiutil', ['create', '-volname', 'Meeting Archive', '-srcfolder', imageRoot, '-format', 'UDZO', '-fs', 'HFS+', dmg]);
+  run('/usr/bin/hdiutil', ['create', '-volname', 'MinuteShelf', '-srcfolder', imageRoot, '-format', 'UDZO', '-fs', 'HFS+', dmg]);
   run('/usr/bin/hdiutil', ['verify', dmg]);
   run('/usr/bin/ditto', ['-c', '-k', '--sequesterRsrc', '--keepParent', packageApp, zip]);
   const checksums = `${await sha256(dmg)}  ${path.basename(dmg)}\n${await sha256(zip)}  ${path.basename(zip)}\n`;

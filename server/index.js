@@ -211,8 +211,8 @@ function createRecorderServer(options = {}) {
 if (require.main === module) {
   const runtime = createRecorderServer();
   runtime.server.listen(runtime.config.server.port, '127.0.0.1', () => {
-    console.log(`Local Recorder: http://127.0.0.1:${runtime.config.server.port}/#token=${runtime.token}`);
-    console.log(`Archive: ${runtime.store.root}`);
+    console.log(`MinuteShelf: http://127.0.0.1:${runtime.config.server.port}/#token=${runtime.token}`);
+    console.log(`MinuteShelf archive: ${runtime.store.root}`);
     console.log('Closing Node does not stop an active native recording. Use the macOS menu bar to stop it.');
   });
   runtime.server.on('error', error => { console.error(error.message); process.exitCode = 1; });

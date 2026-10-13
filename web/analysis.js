@@ -118,7 +118,7 @@
     finally { if (isCurrent(pending.id, pending.revision)) $('analysis-review-confirm').disabled = false; }
   }
   $('analysis-start').onclick = guarded(() => beginReview());
-  $('analysis-settings').onclick = () => { if (!sendNativeCommand('settings')) status('Open the installed Meeting Archive app and choose Settings → Analysis to configure providers and credentials.'); };
+  $('analysis-settings').onclick = () => { if (!sendNativeCommand('settings')) status('Open the installed MinuteShelf app and choose Settings → Analysis to configure providers and credentials.'); };
   $('analysis-install').onclick = guarded(async () => {
     review = null; $('analysis-review-error').textContent = ''; $('analysis-review-confirm').disabled = false;
     $('analysis-review-details').textContent = 'This downloads a private Python/MLX runtime and the selected speech model from package and model repositories. Model weights can take several GB. No meeting audio is uploaded. Python 3.11 or later is required. Setup pauses if you start recording.';

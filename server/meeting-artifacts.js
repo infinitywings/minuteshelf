@@ -28,7 +28,7 @@ class MeetingArtifacts {
     const projectId = this.projects?.assignment(id), project = projectId ? this.projects.get(projectId) : null;
     atomicWrite(path.join(root, 'project.json'), JSON.stringify({ meetingId: id, project }, null, 2));
     const text = `# ${m.title.replace(/[\r\n]/g, ' ')}\n\nMeeting ID: ${id}\nRecording started (UTC): ${m.createdAt}\n${project ? `Project: ${project.name}\n` : ''}\n`
-      + 'This folder contains the local artifacts for this meeting.\n\n'
+      + 'This folder contains the local MinuteShelf artifacts for this meeting.\n\n'
       + '- raw/: Original video, separate audio sources, PTS indexes, and capture events.\n'
       + '- exports/<export-id>/meeting.mp4: Video with audio; recording.m4a: Audio export (depending on the recorded sources).\n'
       + '- context/documents/: Imported document copies and provenance/hash metadata; source files are not moved.\n'

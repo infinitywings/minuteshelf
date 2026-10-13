@@ -605,7 +605,7 @@ private final class ArchiveNavigationTableView: NSTableView {
         guard let id = sender.representedObject as? String, canChangeMeeting(id),
               let meeting = snapshot?.meetings.first(where: { $0.id == id }), let window else { return }
         let alert = NSAlert(); alert.messageText = "Delete “\(meeting.title)”?"
-        alert.informativeText = "This meeting and its recordings, documents, and generated files will move to Recently Deleted in Meeting Archive. You can restore them from the sidebar. Nothing is permanently erased."
+        alert.informativeText = "This meeting and its recordings, documents, and generated files will move to Recently Deleted in MinuteShelf. You can restore them from the sidebar. Nothing is permanently erased."
         alert.alertStyle = .warning
         alert.addButton(withTitle: "Move to Recently Deleted"); alert.addButton(withTitle: "Cancel")
         // Return should keep the archive; deleting remains an explicit click.
@@ -714,7 +714,7 @@ private final class ArchiveNavigationTableView: NSTableView {
     private func constructSettings() {
         guard settingsWindow == nil else { return }
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 570), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.title = "Meeting Archive Settings"; panel.isReleasedWhenClosed = false; panel.center()
+        panel.title = "MinuteShelf Settings"; panel.isReleasedWhenClosed = false; panel.center()
         panel.contentMinSize = NSSize(width: 660, height: 520)
         let tabs = NSTabView(); tabs.tabViewType = .topTabsBezelBorder
         let general = NSTabViewItem(identifier: "general"); general.label = "General"; general.view = NSView()
@@ -754,7 +754,7 @@ private final class ArchiveNavigationTableView: NSTableView {
         grid.rowAlignment = .firstBaseline
         for field in [settingsScreen, settingsMic, settingsAccessibility] { field.font = .systemFont(ofSize: 12); field.textColor = .secondaryLabelColor }
         settingsRefresh.bezelStyle = .rounded; settingsRefresh.target = self; settingsRefresh.action = #selector(checkPermissions)
-        let hint = NSTextField(wrappingLabelWithString: "Choose Request Access to show the macOS prompt. If access was denied or no prompt appears, use Open Settings to enable Meeting Archive. Status updates when you return. Restart the app if macOS asks. Microphone recording is separate from your meeting app’s mute control. Accessibility access is not needed.")
+        let hint = NSTextField(wrappingLabelWithString: "Choose Request Access to show the macOS prompt, or Open Settings to enable MinuteShelf. After an update, check access again: macOS may retain the old Meeting Archive name or require renewed consent for this ad hoc signed build. An enabled switch alone does not confirm access. Restart if macOS asks, then check again. Microphone recording is separate from your meeting app’s mute control. Accessibility access is not needed.")
         hint.font = .systemFont(ofSize: 11); hint.textColor = .secondaryLabelColor
         settingsError.font = .systemFont(ofSize: 11); settingsError.textColor = .systemRed; settingsError.isSelectable = true
         for item in [storageTitle, settingsPath, settingsSpace, revealFolder, permissionTitle, grid, settingsRefresh, hint, settingsError] { body.addArrangedSubview(item) }
@@ -800,6 +800,6 @@ private final class ArchiveNavigationTableView: NSTableView {
             "toolbar": window?.toolbar === toolbar && toolbar.items.count >= 4,
             "nativeSearch": searchField.window === window,
             "stateSnapshot": snapshotReceived, "nativeLibrary": library.window === window && !libraryView.isHidden,
-            "nativeSettings": settingsWindow?.title == "Meeting Archive Settings"]
+            "nativeSettings": settingsWindow?.title == "MinuteShelf Settings"]
     }
 }

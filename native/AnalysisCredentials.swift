@@ -16,6 +16,7 @@ enum AnalysisCredentialError: Error, LocalizedError {
 }
 
 struct AnalysisCredentialScope: Equatable {
+    // Stable storage identity: rebranding must not disconnect saved credentials.
     static let service = "org.meetingarchive.analysis-api-key.v1"
     let account: String
     let endpoint: String
@@ -116,7 +117,7 @@ struct AnalysisKeychainBackend: AnalysisCredentialBackend {
             applications.append(application)
         }
         var access: SecAccess?
-        guard SecAccessCreate("Meeting Archive API credentials" as CFString, applications as CFArray, &access) == errSecSuccess, let access else { throw AnalysisCredentialError.trustUnavailable }
+        guard SecAccessCreate("MinuteShelf API credentials" as CFString, applications as CFArray, &access) == errSecSuccess, let access else { throw AnalysisCredentialError.trustUnavailable }
         return access
     }
     func save(_ data: Data, scope: AnalysisCredentialScope) throws {
@@ -131,7 +132,7 @@ struct AnalysisKeychainBackend: AnalysisCredentialBackend {
             request.removeValue(forKey: kSecMatchSearchList as String)
             if let keychain { request[kSecUseKeychain as String] = keychain }
             request.merge(attributes) { _, new in new }
-            request[kSecAttrLabel as String] = "Meeting Archive · \(scope.task) · \(scope.provider)"
+            request[kSecAttrLabel as String] = "MinuteShelf · \(scope.task) · \(scope.provider)"
             guard SecItemAdd(request as CFDictionary, nil) == errSecSuccess else { throw AnalysisCredentialError.unavailable }
         } else if updated != errSecSuccess { throw AnalysisCredentialError.unavailable }
     }

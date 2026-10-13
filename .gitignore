@@ -132,3 +132,5 @@
 !/web/recorder.css
 !/web/recorder.html
 !/web/recorder.js
+!/docs/INSTALL.md
+!/tools/bundle-policy.mjs

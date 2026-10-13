@@ -15,7 +15,7 @@ const options = { report:path.join(repository, '.build', 'reports', 'bundled-med
 for (let i = 2; i < process.argv.length; i++) {
   const flag = process.argv[i];
   if (flag === '--help') {
-    console.log('node tools/test-bundled-media.mjs --app /path/to/Meeting Archive.app [--report /path/to/report.json]');
+    console.log('node tools/test-bundled-media.mjs --app /path/to/MinuteShelf.app [--report /path/to/report.json]');
     process.exit(0);
   }
   if (!['--app', '--report', '--worker-root'].includes(flag) || !process.argv[i + 1]) throw new Error(`Unknown or incomplete argument: ${flag}`);

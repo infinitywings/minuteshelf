@@ -1,6 +1,6 @@
 # Security
 
-MinuteShelf handles recordings, private documents, and optional provider credentials. Version 0.1.9 is a development preview; security reports are welcome.
+MinuteShelf handles recordings, private documents, and optional provider credentials. Version 0.1.10 is a development preview; security reports are welcome.
 
 Use this repository's **Security → Report a vulnerability** private reporting channel for suspected credential exposure, unauthorized capture, archive access, or remote-data disclosure. Do not put real recordings, tokens, private documents, or participant information into a public issue. A minimal synthetic reproduction is preferred.
 

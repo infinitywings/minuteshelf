@@ -1,6 +1,6 @@
 # README visual assets
 
-Prepared October 13, 2026 for MinuteShelf. The running interface is still named Meeting Archive, version 0.1.9.
+Prepared October 13, 2026 for MinuteShelf. UI screenshots were refreshed for the 0.1.10 name change.
 
 ## Logo and diagram
 

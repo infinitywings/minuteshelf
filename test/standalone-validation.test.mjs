@@ -6,11 +6,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { parseArguments, isWithin, parseLibraries, parseRpaths, resolveLibrary, parseSmokeResult, validateSmokeResult, validateCodexVersion, validateCodexProtocol } from '../tools/test-standalone.mjs';
+import { appIdentity, runtimeModules, shippedFiles, validateBundleContents, validateBuildInformation, validateBundlePlist, validateAppSignature } from '../tools/bundle-policy.mjs';
 
 function fixture(t) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'meeting-standalone-unit-')));
   t.after(() => fs.rmSync(root, { recursive:true, force:true }));
-  const bundle = path.join(root, 'Relocated apps with spaces', 'Meeting Archive.app');
+  const bundle = path.join(root, 'Relocated apps with spaces', 'MinuteShelf.app');
   const binary = path.join(bundle, 'Contents', 'MacOS', 'MeetingArchive');
   const framework = path.join(bundle, 'Contents', 'Frameworks', 'libFixture.dylib');
   for (const file of [binary, framework]) { fs.mkdirSync(path.dirname(file), { recursive:true }); fs.writeFileSync(file, 'Only a path-resolution fixture'); }
@@ -19,10 +20,10 @@ function fixture(t) {
 
 test('standalone CLI supports paths with spaces and explicit output without ambiguous sources', () => {
   const defaults = parseArguments([], '/project');
-  assert.equal(defaults.app, '/project/.build/Meeting Archive.app');
+  assert.equal(defaults.app, '/project/.build/MinuteShelf.app');
   assert.equal(defaults.report, '/project/.build/reports/standalone-validation.json');
-  const supplied = parseArguments(['--dmg','/tmp/Meeting Archive.dmg','--report','/tmp/Review report.json','--timeout-ms','45000'], '/project');
-  assert.equal(supplied.dmg, '/tmp/Meeting Archive.dmg'); assert.equal(supplied.report, '/tmp/Review report.json'); assert.equal(supplied.timeoutMs, 45000);
+  const supplied = parseArguments(['--dmg','/tmp/MinuteShelf.dmg','--report','/tmp/Review report.json','--timeout-ms','45000'], '/project');
+  assert.equal(supplied.dmg, '/tmp/MinuteShelf.dmg'); assert.equal(supplied.report, '/tmp/Review report.json'); assert.equal(supplied.timeoutMs, 45000);
   assert.throws(() => parseArguments(['--app','/app','--dmg','/image']), /not both/);
   assert.throws(() => parseArguments(['--report']), /incomplete/);
   assert.throws(() => parseArguments(['--timeout-ms','Infinity']), /Timeout/);
@@ -30,10 +31,10 @@ test('standalone CLI supports paths with spaces and explicit output without ambi
 });
 
 test('Mach-O dependency parsing supports fat slices and spaces without treating headers as libraries', () => {
-  const output = `/tmp/Relocated apps with spaces/Meeting Archive.app/Contents/MacOS/MeetingArchive (architecture arm64):
+  const output = `/tmp/Relocated apps with spaces/MinuteShelf.app/Contents/MacOS/MeetingArchive (architecture arm64):
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)
 \t@rpath/Fixture Framework.framework/Fixture Framework (compatibility version 1.0.0, current version 1.0.0)
-/tmp/Relocated apps with spaces/Meeting Archive.app/Contents/MacOS/MeetingArchive (architecture x86_64):
+/tmp/Relocated apps with spaces/MinuteShelf.app/Contents/MacOS/MeetingArchive (architecture x86_64):
 \t/usr/lib/libSystem.B.dylib (compatibility version 1.0.0, current version 1351.0.0)
 `;
   assert.deepEqual(parseLibraries(output), ['/usr/lib/libSystem.B.dylib','@rpath/Fixture Framework.framework/Fixture Framework']);
@@ -116,4 +117,75 @@ test('bundled Codex validation requires the pinned runtime and managed login sch
   assert.throws(() => validateCodexProtocol(client, initialize, {}, login), /refreshToken/);
   assert.throws(() => validateCodexProtocol(client, initialize, account, { oneOf:[] }), /managed ChatGPT/);
   assert.throws(() => validateCodexProtocol(client, initialize, account, { oneOf:[{ ...login.oneOf[0], required:['type','accessToken'] }] }), /client-supplied credentials/);
+});
+
+function shippingFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'minuteshelf-shipping-unit-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const bundle = path.join(root, appIdentity.bundleName);
+  const information = { applicationName: 'MinuteShelf', bundleIdentifier: 'local.meetingarchive.app',
+    version: '0.1.10', architecture: 'arm64', minimumMacOS: '15.0',
+    signing: { kind: 'adhoc', notarization: 'not-submitted' }, runtimeModules: [...runtimeModules] };
+  for (const name of shippedFiles()) {
+    const file = path.join(bundle, name);
+    fs.mkdirSync(path.dirname(file), { recursive: true }); fs.writeFileSync(file, 'Synthetic bundle policy fixture');
+  }
+  fs.writeFileSync(path.join(bundle, 'Contents/Resources/build-info.json'), JSON.stringify(information));
+  return { root, bundle, information };
+}
+
+test('release inventory permits only the complete explicitly shipped payload', t => {
+  const { bundle } = shippingFixture(t);
+  assert.deepEqual(validateBundleContents(bundle, { expectedVersion: '0.1.10' }).files, shippedFiles());
+  assert.throws(() => validateBundleContents(bundle, { expectedVersion: '0.1.9' }), /versions differ/);
+  fs.unlinkSync(path.join(bundle, 'Contents/Helpers/codex'));
+  assert.throws(() => validateBundleContents(bundle), /Required shipping files/);
+});
+
+test('release inventory rejects personal data, credentials and local debug artifacts anywhere in the bundle', t => {
+  const { bundle } = shippingFixture(t);
+  for (const name of [
+    'Contents/Resources/runtime/auth.json',
+    'Contents/Resources/runtime/.env',
+    'Contents/Resources/runtime/.build/capture-diagnostics.json',
+    'Contents/Resources/runtime/web/brand/private-meeting.png',
+    'Contents/Resources/Licenses/Node-runtime.json'
+  ]) {
+    const file = path.join(bundle, name); fs.writeFileSync(file, 'Synthetic private-file marker');
+    assert.throws(() => validateBundleContents(bundle), /Unexpected bundle file/);
+    fs.unlinkSync(file);
+  }
+  const privateDirectory = path.join(bundle, 'Contents/Resources/runtime/data');
+  fs.mkdirSync(privateDirectory);
+  assert.throws(() => validateBundleContents(bundle), /Unexpected bundle directory/);
+  fs.rmdirSync(privateDirectory);
+  const script = path.join(bundle, 'Contents/Resources/runtime/tools/local-asr.py');
+  fs.unlinkSync(script);
+  fs.symlinkSync(path.join(bundle, 'Contents/Resources/LICENSE'), script);
+  assert.throws(() => validateBundleContents(bundle), /symbolic links/);
+});
+
+test('payload metadata cannot extend the shipping boundary or silently change persistent identity', t => {
+  const { information } = shippingFixture(t);
+  assert.throws(() => validateBuildInformation({ ...information, runtimeModules: [...runtimeModules, '../auth.json'] }), /shipping policy/);
+  assert.throws(() => validateBuildInformation({ ...information, runtimeModules: [...runtimeModules, 'server/private-debug.js'] }), /shipping policy/);
+  assert.throws(() => validateBuildInformation({ ...information, applicationName: 'Meeting Archive' }), /public application name/);
+  assert.throws(() => validateBuildInformation({ ...information, bundleIdentifier: 'new.minuteshelf.app' }), /identity/);
+  const plist = { CFBundleIdentifier: 'local.meetingarchive.app', CFBundleExecutable: 'MeetingArchive',
+    CFBundleName: 'MinuteShelf', CFBundleDisplayName: 'MinuteShelf', CFBundleShortVersionString: '0.1.10',
+    CFBundleVersion: '0.1.10', LSMinimumSystemVersion: '15.0', MeetingArchiveDistribution: 'adhoc' };
+  validateBundlePlist(plist, information);
+  assert.throws(() => validateBundlePlist({ ...plist, CFBundleExecutable: 'MinuteShelf' }, information), /compatible name/);
+  assert.throws(() => validateBundlePlist({ ...plist, CFBundleIdentifier: 'new.minuteshelf.app' }, information), /bundle identity/);
+});
+
+test('ad-hoc releases keep build-specific identity instead of broadening a requirement to retain permissions', t => {
+  const { information } = shippingFixture(t), cdhash = 'a'.repeat(40);
+  const display = `Identifier=local.meetingarchive.app\nSignature=adhoc\nCDHash=${cdhash}\n`;
+  const requirement = `# designated => cdhash H"${cdhash}"\n`;
+  assert.equal(validateAppSignature(display, requirement, information).cdhash, cdhash);
+  assert.throws(() => validateAppSignature(display, 'designated => identifier "local.meetingarchive.app"', information), /build-specific/);
+  assert.throws(() => validateAppSignature(display, requirement.replace(cdhash, 'b'.repeat(40)), information), /build-specific/);
+  assert.throws(() => validateAppSignature(display, `designated => cdhash H"${cdhash}" or identifier "local.meetingarchive.app"`, information), /build-specific/);
+  assert.throws(() => validateAppSignature(display.replace('Signature=adhoc', 'Signature=other'), requirement, information), /signing type/);
 });
