@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>local.meetingarchive.app</string>
+  <key>CFBundleName</key><string>Meeting Archive</string>
+  <key>CFBundleDisplayName</key><string>Meeting Archive</string>
+  <key>CFBundleExecutable</key><string>MeetingArchive</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
+  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>LSMultipleInstancesProhibited</key><true/>
+  <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <key>NSMicrophoneUsageDescription</key><string>Save microphone audio only when you explicitly enable the microphone source for a meeting. Muting the meeting app does not mute this recorder.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Save system audio only when you select it as a meeting recording source.</string>
+  <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
+  <key>MeetingArchiveDistribution</key><string>adhoc</string>
+  <!-- APP_ICON -->
+</dict></plist>

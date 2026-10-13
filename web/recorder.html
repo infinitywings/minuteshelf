@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Meeting Archive</title>
+  <link rel="icon" type="image/png" href="/brand/meeting-archive-mark.png">
+  <link rel="stylesheet" href="/recorder.css">
+</head>
+<body>
+<aside>
+  <div class="brand"><img class="brand-icon" src="/brand/meeting-archive-mark.png" width="34" height="34" alt=""><div>Meeting Archive<small>Keep the conversation</small></div></div>
+  <button id="new" class="primary">+ New meeting</button>
+  <button id="all-meetings" class="sidebar-all selected">▤ <span>All meetings</span></button>
+  <div class="sidebar-heading">Projects <button id="project-new" aria-label="Create project">＋</button></div>
+  <nav id="projects" aria-label="Local projects"></nav>
+  <div class="sidebar-heading">Recent <button id="refresh-meetings" aria-label="Refresh meetings">↻</button></div>
+  <nav id="meetings" aria-label="Meeting archives"></nav>
+  <button id="settings-open" class="sidebar-settings" type="button" aria-haspopup="dialog" aria-controls="settings-dialog"><span aria-hidden="true">⚙</span> Settings <kbd>⌘,</kbd></button>
+  <footer><span class="dot"></span> Saved locally<small id="storage"></small></footer>
+</aside>
+<main>
+  <header><div><span class="eyebrow" id="page-kicker">Your meeting space</span><h1 id="heading" tabindex="-1">All meetings</h1></div><span id="connection" class="badge" role="status">Not connected</span></header>
+  <div id="message" role="status" hidden></div>
+  <section id="auth" class="card" hidden><h2>Connect to the local service</h2><p class="hint">Open the access link shown in the terminal, or enter an access token.</p><form id="auth-form"><label>Access token<input id="token" type="password" autocomplete="off" required></label><button class="primary">Connect</button></form></section>
+  <section id="home">
+    <div class="library-toolbar"><p id="library-count" class="hint">Your meeting notes, recordings, and documents, together.</p><input id="meeting-search" type="search" aria-label="Search meetings" placeholder="Search titles or notes…"></div>
+    <div id="library-list"></div>
+    <div id="library-empty" class="empty-state" hidden><span class="empty-icon" aria-hidden="true">✧</span><h2>Start with a conversation</h2><p>Choose a window and record the conversation.<br>Your notes and questions stay with the recording.</p><button id="empty-new" class="primary">+ New meeting</button></div>
+  </section>
+  <section id="setup" hidden>
+    <p class="section-intro">Check the picture and sound, then start. Recording runs without AI processing so you can focus on the discussion.</p>
+    <section class="card permission-card" aria-labelledby="permission-heading">
+      <div class="label-row"><h2 id="permission-heading">Recording permissions</h2><button id="permissions-refresh" class="quiet">Check again</button></div>
+      <div class="permission-row"><div><strong>Screen &amp; system audio</strong><small id="permission-screen" role="status">Not checked yet</small></div><div class="actions"><button id="permission-screen-request" class="secondary">Allow access</button><button id="permission-screen-settings" class="quiet" hidden>Open System Settings</button></div></div>
+      <div class="permission-row"><div><strong>Microphone</strong><small id="permission-microphone" role="status">Requested when microphone recording is enabled</small></div><div class="actions"><button id="permission-microphone-request" class="secondary" hidden>Allow access</button><button id="permission-microphone-settings" class="quiet" hidden>Open System Settings</button></div></div>
+      <p id="permission-hint" class="hint" role="status">Screen permission is requested when you choose a window. Microphone permission is requested only when you enable microphone recording. Accessibility permission is not required.</p>
+    </section>
+    <div class="setup-grid">
+      <section class="card"><h2>What to record</h2>
+        <label>Meeting title<input id="title" placeholder="e.g. Research discussion · Weekly meeting" maxlength="300"></label>
+        <label>Project (optional)<select id="setup-project"><option value="">No project</option></select></label>
+        <label>Capture mode<select id="capture-kind"><option value="window">Window</option><option value="display">Entire display</option></select></label>
+        <p id="capture-scope" class="hint">Records only the selected window. When presenting in Zoom, select the actual shared content window; the original Zoom window may stop providing video.</p>
+        <div class="label-row"><label id="source-label" for="window">Window</label><button id="sources" class="quiet">Refresh list</button></div>
+        <select id="window"><option value="">Refresh the window list first</option></select>
+        <button id="preview" class="secondary">Preview window</button>
+        <div class="preview"><img id="preview-image" alt="Recording preview of the selected window" hidden><div id="preview-placeholder">The selected window will appear here</div></div>
+        <label class="check"><input id="confirmed" type="checkbox" disabled> <span id="confirmed-label">This is the window I want to record</span></label>
+        <details class="soft-details"><summary>What happens when sources change?</summary><p class="hint">Window mode follows only that window, including its active browser tab. It does not follow Zoom's shared source. Display mode includes everything visible on the selected display, including other apps and notifications. To change the capture target, stop and select it again. Missing video is reported as a gap; the recorder never switches targets automatically.</p></details>
+      </section>
+      <section class="card"><h2>Audio</h2>
+        <label class="check"><input id="mic" type="checkbox"> Record microphone</label>
+        <select id="mic-device" aria-label="Microphone device"><option value="">Refresh the list, then choose a device</option></select>
+        <p class="hint">Muting your meeting app does not mute this recorder. You can turn microphone recording off here or in the menu bar.</p>
+        <label class="check"><input id="system" type="checkbox"> Record all system audio</label>
+        <p class="hint">Includes sound from other apps, browser tabs, and notifications.</p>
+        <details class="soft-details"><summary>Video quality</summary><label>Frame rate<select id="fps"><option value="15">15 fps · Discussions, slides, papers</option><option value="30">30 fps · Live demos</option></select></label><p class="hint">H.264 · Up to 2560 pixels on the longest edge · No upscaling<br>Microphone and system audio are archived separately.</p></details>
+        <div class="start-area"><p class="hint">Inform participants before recording and follow your meeting policy.</p><p id="start-status" class="hint" role="status">Choose a window and preview it before starting.</p><button id="start" class="primary wide" aria-describedby="start-status" disabled>Start recording</button></div>
+      </section>
+    </div>
+  </section>
+  <section id="project-view" hidden>
+    <div class="project-top"><span id="project-stats" class="hint"></span><a id="project-context-export" download="project-context.json" hidden>Export project context</a></div>
+    <details id="project-details" class="card"><summary>Project context &amp; RKA</summary>
+      <form id="project-form">
+        <label>Project name<input id="project-name" maxlength="200" required></label>
+        <label>Project context<textarea id="project-description" rows="3" maxlength="4000" placeholder="Goals, scope, or ongoing questions"></textarea></label>
+        <div class="label-row"><label for="project-rka">Linked RKA project (optional)</label><button id="project-rka-load" type="button" class="quiet">Load projects</button></div>
+        <select id="project-rka"><option value="">No RKA project</option></select>
+        <p class="hint">Each meeting can use selected background records from the linked RKA project.</p>
+        <div class="label-row"><span id="project-save-state" class="hint" role="status"></span><button class="primary">Save project</button></div>
+      </form>
+    </details>
+    <div class="timeline-heading"><h2>Project timeline</h2><span class="hint">Meetings and saved notes</span></div><div id="project-timeline"></div>
+  </section>
+  <section id="review" hidden>
+    <div class="meeting-meta"><span id="meeting-date"></span><button id="project-quick" class="chip"></button><span id="meeting-duration"></span></div>
+    <div class="capture-bar"><div><span id="record-indicator" class="dot"></span><strong id="state"></strong><small id="capture-warning" hidden></small></div><div class="actions"><button id="mic-toggle" hidden></button><button id="pause" hidden>Pause</button><button id="stop" class="danger" hidden>Stop &amp; save</button><button id="recover" hidden>Recover unfinished media</button></div></div>
+    <nav class="meeting-tabs" aria-label="Meeting content" role="tablist"><button id="tab-notes" role="tab" aria-selected="true" aria-controls="panel-notes" data-tab="notes">Notes</button><button id="tab-playback" role="tab" aria-selected="false" aria-controls="panel-playback" data-tab="playback" tabindex="-1">Playback</button><button id="tab-artifacts" role="tab" aria-selected="false" aria-controls="panel-artifacts" data-tab="artifacts" tabindex="-1">Files</button><button id="tab-context" role="tab" aria-selected="false" aria-controls="panel-context" data-tab="context" tabindex="-1">RKA context</button></nav>
+    <section id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" class="note-paper">
+      <div class="note-toolbar"><h2>My notes</h2><div class="actions"><small id="notes-state" role="status"></small><button id="save-notes" class="quiet">Save</button></div></div>
+      <label for="notes" class="visually-hidden">Meeting notes</label><textarea id="notes" placeholder="Capture an idea, question, or next step…"></textarea>
+      <div class="bookmark-row"><input id="bookmark-text" placeholder="What would you like to revisit?" maxlength="4000" aria-label="Bookmark note"><button id="bookmark">+ Bookmark</button></div><div id="bookmarks"></div>
+      <section class="analysis-workspace" aria-labelledby="analysis-heading">
+        <div class="label-row"><h2 id="analysis-heading">Notes with evidence</h2><button id="analysis-settings" class="quiet">Analysis settings…</button></div>
+        <p id="analysis-state" class="hint" role="status">Choose providers in Settings → Analysis, then analyze a saved meeting.</p>
+        <p id="analysis-models" class="hint"></p>
+        <div class="analysis-options"><label class="check"><input id="analysis-context" type="checkbox" checked> Include attached context and selected RKA records</label>
+          <details id="analysis-import" hidden><summary>Imported transcript</summary><label for="analysis-transcript">Paste text or JSON segments (text, startMs, endMs)</label><textarea id="analysis-transcript" maxlength="800000" placeholder="Plain text receives a whole-meeting time range. JSON can preserve segment times."></textarea></details></div>
+        <div class="actions"><button id="analysis-start" class="primary">Review &amp; analyze</button><button id="analysis-install">Install Local STT…</button></div>
+        <div id="analysis-jobs"></div>
+        <section id="analysis-result" hidden><div class="label-row"><h3>Generated notes</h3><a id="analysis-download">Download Markdown</a></div><p id="analysis-result-label" class="hint"></p><div id="analysis-summary"></div><details><summary>Transcript &amp; source evidence</summary><div id="analysis-evidence"></div></details></section>
+      </section>
+    </section>
+    <section id="panel-playback" role="tabpanel" aria-labelledby="tab-playback" hidden>
+      <section id="merged-preview" class="card" hidden><div class="label-row"><h2>Full meeting</h2><a id="merged-download">Download video</a></div><video id="merged-video" controls preload="metadata" aria-label="Combined video and audio playback"></video><p class="hint">Pauses and interruptions remain as black video or silence. Exports and originals are saved in the same meeting folder.</p></section>
+      <section class="card media-card"><div class="label-row"><h2>Original recording</h2><button id="playback-export-link" class="quiet">Combine &amp; export ↗</button></div>
+        <video id="video" preload="metadata" playsinline aria-label="Original meeting picture"></video>
+        <div id="video-gap" class="video-gap" role="status" hidden>Video unavailable at this time. Available audio continues during playback.</div>
+        <p id="video-empty" class="hint">No video has been saved. You can play available audio on the meeting timeline.</p>
+        <label>Meeting timeline<input type="range" id="timeline" min="0" max="1" step="0.1" value="0"></label>
+        <div class="label-row"><div class="session-controls"><button id="play-session" aria-label="Play meeting recording">Play</button><span class="session-time"><span id="position">00:00</span> / <span id="playback-duration">00:00</span></span></div><div class="audio-options"><label class="check"><input id="listen-system" type="checkbox" checked> System audio</label><label class="check"><input id="listen-mic" type="checkbox"> Microphone</label></div></div>
+        <p class="hint">Playback follows the full meeting timeline. Missing video stays visible as a gap; available audio continues.</p>
+        <audio id="audio-system" preload="metadata"></audio><audio id="audio-microphone" preload="metadata"></audio>
+        <details class="soft-details"><summary>Browse segments</summary><div id="segments"></div></details>
+        <details class="audio-alone"><summary>Audio-only playback</summary><div class="audio-picker"><select id="audio-source" aria-label="Audio-only playback source"><option value="system">System audio</option><option value="microphone">Microphone</option></select><select id="audio-clip" aria-label="Audio segment"></select></div><audio id="standalone-audio" controls preload="metadata" hidden></audio></details>
+      </section>
+      <details class="card recording-details"><summary>Recording details &amp; known gaps</summary><p id="target" class="hint"></p><div class="health"><span id="clock"></span><span id="size"></span><span id="level-mic"></span><span id="level-system"></span><span id="write-health"></span></div><div id="gaps"></div><a id="manifest">Download manifest</a></details>
+    </section>
+    <section id="panel-artifacts" role="tabpanel" aria-labelledby="tab-artifacts" hidden>
+      <section class="folder-banner"><div class="folder-mark" aria-hidden="true">▱</div><div><h2>Meeting files</h2><p>Audio, video, context, and generated content in one place.</p></div><button id="open-folder">Open in Finder ↗</button></section>
+      <div class="meeting-project-row"><label for="meeting-project">Project</label><select id="meeting-project"><option value="">No project</option></select><button id="assign-project">Save assignment</button><button id="open-project" hidden>View project</button></div>
+      <section class="card document-card"><div class="label-row"><h2>Context documents</h2><span class="hint">Original files are copied</span></div><div id="document-list"></div>
+        <div class="document-import"><label for="document-files">Add papers, slides, or other documents</label><input id="document-files" type="file" multiple><div class="label-row"><span id="document-state" class="hint" role="status">Up to 100 MB per file</span><button id="documents-import" class="secondary">Import documents</button></div></div>
+      </section>
+      <section class="card export-card"><h2>Audio &amp; video</h2><p class="hint">Create an MP4 with audio and a separate M4A file. Choose which audio sources to include; the original tracks are preserved.</p><div class="audio-options"><label class="check"><input id="export-system" type="checkbox" checked> System audio</label><label class="check"><input id="export-mic" type="checkbox" checked> Microphone</label></div><div class="label-row export-action"><span id="export-state" class="hint" role="status"></span><button id="export-media">Create combined files</button></div><div id="export-files"></div></section>
+      <details class="card artifact-details"><summary>Folder &amp; all files</summary><p id="archive-path" class="hint"></p><button id="artifacts-refresh" class="quiet">Refresh files</button><div id="artifact-list"></div></details>
+    </section>
+    <section id="panel-context" role="tabpanel" aria-labelledby="tab-context" hidden>
+      <section class="card context-card"><div class="label-row"><h2>Add context from RKA</h2><a id="rka-export" download="meeting-context.json">Export context</a></div><p class="hint">Only your selected project is read. Background records and meeting statements retain separate sources.</p>
+      <label class="check"><input id="rka-enabled" type="checkbox"> Use RKA context for this meeting’s analysis</label>
+      <div class="label-row"><label for="rka-project">RKA project</label><div class="actions"><button id="rka-use-project">Use project link</button><button id="rka-load" class="quiet">Load projects</button></div></div>
+      <select id="rka-project"><option value="">Choose an RKA project</option></select>
+      <label>Questions for this meeting<textarea id="rka-query" rows="2" maxlength="2000" placeholder="Task progress, previous decisions, or missing context…"></textarea></label>
+      <details class="soft-details"><summary>Refine the search</summary><label>One short keyword group per line, up to 8 lines<textarea id="rka-angles" rows="2" maxlength="960" placeholder="Current progress&#10;Experiment results&#10;Open questions"></textarea></label></details>
+      <div class="label-row"><span id="rka-state" class="hint" role="status"></span><div class="actions"><button id="rka-save">Save selection</button><button id="rka-refresh" class="primary">Find context</button></div></div>
+      <p class="hint">Review the records, select what to include, then save. Historical and unverified records keep their labels. Search again when you need updated context.</p><div id="rka-records"></div></section>
+    </section>
+  </section>
+</main>
+<dialog id="settings-dialog" aria-labelledby="settings-heading">
+  <div class="settings-header"><h2 id="settings-heading">Settings</h2><button id="settings-close" class="quiet" type="button" autofocus aria-label="Close Settings">Done</button></div>
+  <section class="settings-section" aria-labelledby="settings-appearance-heading">
+    <h3 id="settings-appearance-heading">Appearance</h3>
+    <p>Follows the macOS light or dark appearance.</p>
+    <p class="hint">Also follows the system’s increased contrast, reduced motion, and reduced transparency preferences.</p>
+  </section>
+  <section class="settings-section" aria-labelledby="settings-permissions-heading">
+    <div class="label-row"><h3 id="settings-permissions-heading">Recording permissions</h3><button id="settings-permissions-refresh" type="button">Check permissions</button></div>
+    <div class="permission-row"><div><strong>Screen &amp; system audio</strong><small id="settings-permission-screen" role="status">Not checked</small></div><div class="actions"><button id="settings-permission-screen-request" type="button">Request Access</button><button id="settings-permission-screen-settings" class="quiet" type="button">Open Settings…</button></div></div>
+    <div class="permission-row"><div><strong>Microphone</strong><small id="settings-permission-microphone" role="status">Not checked</small></div><div class="actions"><button id="settings-permission-microphone-request" type="button">Request Access</button><button id="settings-permission-microphone-settings" class="quiet" type="button">Open Settings…</button></div></div>
+    <p id="settings-permission-status" class="hint" role="status">Checking permissions…</p>
+    <p class="hint">Request access here, or open the matching macOS Privacy &amp; Security page if access was previously denied. Permissions are checked again when you return. Granting access does not start recording. Accessibility permission is not required.</p>
+  </section>
+  <section class="settings-section" aria-labelledby="settings-storage-heading">
+    <h3 id="settings-storage-heading">Storage location</h3>
+    <p id="settings-archive-path" class="path-value">Loading…</p>
+    <p class="hint">Each meeting’s recordings, context documents, and exports are kept in one folder.</p>
+  </section>
+  <section class="settings-section" aria-labelledby="settings-shortcuts-heading">
+    <h3 id="settings-shortcuts-heading">Keyboard shortcuts</h3>
+    <ul id="settings-shortcuts" class="shortcut-list">
+      <li><span>New meeting</span><kbd>⌘N</kbd></li>
+      <li><span>Search meetings</span><kbd>⌘F</kbd></li>
+      <li><span>Save meeting notes</span><kbd>⌘S</kbd></li>
+      <li><span>Open Settings</span><kbd>⌘,</kbd></li>
+      <li><span>Close Settings</span><kbd>Esc</kbd></li>
+      <li><span>Toggle microphone recording (with a meeting open)</span><kbd>⌥⇧M</kbd></li>
+    </ul>
+    <p class="hint">Shortcuts apply while this app window is active.</p>
+  </section>
+</dialog>
+<dialog id="analysis-review" aria-labelledby="analysis-review-heading"><h2 id="analysis-review-heading">Review analysis</h2><pre id="analysis-review-details" class="analysis-review-text"></pre><p id="analysis-review-error" role="alert"></p><div class="actions"><button id="analysis-review-cancel">Cancel</button><button id="analysis-review-confirm" class="primary">Start analysis</button></div></dialog>
+<script src="/recorder.js" defer></script>
+<script src="/analysis.js" defer></script>
+</body></html>

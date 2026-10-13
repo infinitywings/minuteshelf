@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>local.meetingarchive.recorder</string>
+  <key>CFBundleName</key><string>Meeting Archive Recorder</string>
+  <key>CFBundleExecutable</key><string>archivecap</string>
+  <key>CFBundleVersion</key><string>0.1.0</string>
+  <key>LSUIElement</key><true/>
+  <key>NSMicrophoneUsageDescription</key><string>Only record the microphone when you explicitly enable it in Meeting Archive. Meeting-app mute does not control this recording.</string>
+  <key>NSAudioCaptureUsageDescription</key><string>Save a separate system-audio track only when you explicitly select system audio for a recording.</string>
+</dict></plist>

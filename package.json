@@ -1,0 +1,33 @@
+{
+  "name": "minuteshelf",
+  "version": "0.1.9",
+  "description": "MinuteShelf: a macOS meeting recorder with local speech and modular post-meeting AI.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/infinitywings/minuteshelf.git" },
+  "homepage": "https://github.com/infinitywings/minuteshelf#readme",
+  "bugs": { "url": "https://github.com/infinitywings/minuteshelf/issues" },
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "check:publication": "node tools/check-publication.mjs",
+    "start": "node server/index.js",
+    "test": "node --test test/archive.test.js test/context.test.js test/artifacts.test.js test/permissions.test.js test/capture-selection.test.js test/ui.test.js test/desktop.test.js test/standalone-validation.test.mjs test/analysis-providers.test.js test/analysis-media.test.js test/analysis.test.js test/analysis-ui.test.js test/capture-diagnostics.test.js test/meeting-lifecycle.test.js test/archive-timeline.test.js",
+    "build:native": "node tools/build-native.mjs",
+    "vendor:node": "node tools/fetch-node-runtime.mjs",
+    "vendor:codex": "node tools/fetch-codex-runtime.mjs",
+    "build:app": "node tools/build-app.mjs",
+    "package:app": "node tools/package-app.mjs",
+    "test:standalone": "node tools/test-standalone.mjs",
+    "test:codex": "node tools/test-codex-connection.mjs",
+    "start:app": "open '.build/Meeting Archive.app'",
+    "test:native": "node tools/test-native.mjs",
+    "test:export": "node tools/test-export.mjs",
+    "test:native-regressions": "node tools/test-native-regressions.mjs",
+    "test:capture-diagnostics": "node tools/test-capture-diagnostics-native.mjs",
+    "test:display-selection": "node tools/test-display-selection-native.mjs",
+    "test:playback-webkit": "node tools/test-playback-webkit.mjs",
+    "test:bundled-media": "node tools/test-bundled-media.mjs",
+    "test:analysis-protocols": "node tools/test-analysis-protocols.mjs",
+    "test:zero-pts": "node tools/test-zero-pts-native.mjs",
+    "test:shell": "node tools/test-shell.mjs"
+  }
+}

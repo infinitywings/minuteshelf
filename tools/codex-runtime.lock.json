@@ -1,0 +1,23 @@
+{
+  "version": "0.160.0",
+  "package": "@openai/codex",
+  "packageVersion": "0.160.0-darwin-arm64",
+  "platform": "darwin-arm64",
+  "archive": "codex-0.160.0-darwin-arm64.tgz",
+  "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.160.0-darwin-arm64.tgz",
+  "metadataUrl": "https://registry.npmjs.org/@openai/codex/0.160.0-darwin-arm64",
+  "npmIntegrity": "sha512-aefV6cqZA2REZgR//4McyXlp7zLcTti4CI2v3j9IVgNndPBv2kCeNEcz07qeelXcwOdSFPUKb6roA48vZmDgrQ==",
+  "sha256": "fc789bcd655d903f92e1a23c8dc5315ba38f43b3586eafb7bd3b195970b57466",
+  "binaryMember": "package/vendor/aarch64-apple-darwin/bin/codex",
+  "binarySha256": "112fae7a5a1223e673c8a1791d32338f37df8b527ff1159bb8adac6c4dbf1b4b",
+  "licenseUrl": "https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/LICENSE",
+  "licenseSha256": "d17f227e4df5da1600391338865ce0f3055211760a36688f816941d58232d8dc",
+  "noticeUrl": "https://raw.githubusercontent.com/openai/codex/rust-v0.160.0/NOTICE",
+  "noticeSha256": "9d71575ecfd9a843fc1677b0efb08053c6ba9fd686a0de1a6f5382fd3c220915",
+  "purpose": "Managed ChatGPT account connection through the app-server stdio API. Optional voice, code-mode-host, ripgrep, and shell resources are not bundled or used.",
+  "protocol": {
+    "initializeSchema": "v1",
+    "accountSchema": "v2",
+    "requiredMethods": ["initialize", "account/read", "account/login/start", "account/login/cancel", "account/logout"]
+  }
+}

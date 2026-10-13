@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="850" viewBox="0 0 1440 850" role="img" aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">MinuteShelf: Record, understand, and revisit</title>
+  <desc id="diagram-description">Audio goes to STT for a transcript. Selected screen frames go to a VLM for visual evidence. These results, plus documents and context, feed a separately chosen LLM for meeting notes. Original recordings and analysis outputs belong to one meeting archive with playback, project grouping, and export. Each model can be selected independently.</desc>
+  <defs><marker id="arrowhead" markerWidth="10" markerHeight="10" refX="7" refY="4" orient="auto" markerUnits="userSpaceOnUse"><path d="M0 0L8 4L0 8" fill="none" stroke="#899C70" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></marker></defs>
+  <style>
+    text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; fill: #29352A; }
+    .brand { font-size: 15px; font-weight: 750; letter-spacing: 2.3px; fill: #52683B; }
+    .title { font-size: 42px; font-weight: 650; letter-spacing: -1.3px; }
+    .step { font-size: 16px; font-weight: 750; letter-spacing: 1.7px; fill: #52683B; }
+    .input { font-size: 25px; font-weight: 600; }
+    .module { font-size: 43px; font-weight: 700; letter-spacing: -.7px; fill: #52683B; }
+    .secondary { font-size: 22px; fill: #737B6D; }
+    .caption { font-size: 21px; fill: #737B6D; }
+    .archivetitle { font-size: 25px; font-weight: 650; fill: #FFFFFF; }
+    .archivesubtitle { font-size: 19px; fill: #DFE7D5; }
+    .archiveaction { font-size: 22px; font-weight: 550; fill: #FFFFFF; }
+    .arrow { fill: none; stroke: #899C70; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .originals { fill: none; stroke: #899C70; stroke-width: 2; stroke-dasharray: 5 7; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+  <rect width="1440" height="850" rx="28" fill="#F8F7F2"/>
+  <text x="80" y="54" class="brand" >MINUTESHELF</text>
+  <text x="80" y="106" class="title" >Record. Understand. Revisit.</text>
+  <text x="80" y="163" class="step" >01  RECORD</text>
+  <rect x="80" y="186" width="725" height="122" rx="24" fill="#FFFFFF" stroke="#DAE0D3"/>
+  <path d="M442 210V284" stroke="#DAE0D3"/>
+  <g transform="translate(215 208)" fill="none" stroke="#52683B" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1 15v6M8 8v20M15 1v34M22 8v20M29 15v6"/></g>
+  <text x="270" y="233" class="input" >Audio</text>
+  <g transform="translate(570 208)" fill="none" stroke="#52683B" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="2" width="32" height="23" rx="3"/><path d="M10 34h14M17 25v9"/></g>
+  <text x="627" y="233" class="input" >Screen</text>
+  <path d="M260 308V385" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M645 308V385" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M80 247H42V753H69" class="originals" marker-end="url(#arrowhead)"/>
+  <rect x="1015" y="186" width="325" height="122" rx="24" fill="#FFFFFF" stroke="#DAE0D3"/>
+  <g transform="translate(1050 217)" fill="none" stroke="#52683B" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2h15l9 9v25H6ZM21 2v9h9M12 18h12M12 25h12"/></g>
+  <text x="1109" y="231" class="input" >Documents</text>
+  <text x="1109" y="265" class="secondary" >Context</text>
+  <path d="M1177 308V385" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="80" y="367" class="step" >02  UNDERSTAND</text>
+  <rect x="100" y="396" width="320" height="136" rx="24" fill="#FFFFFF" stroke="#DAE0D3"/>
+  <text x="132" y="455" class="module" >STT</text>
+  <text x="132" y="497" class="secondary" >Transcript</text>
+  <rect x="485" y="396" width="320" height="136" rx="24" fill="#FFFFFF" stroke="#DAE0D3"/>
+  <text x="517" y="455" class="module" >VLM</text>
+  <text x="517" y="497" class="secondary" >Visual evidence</text>
+  <rect x="1015" y="396" width="325" height="136" rx="24" fill="#EFF3E7" stroke="#DAE0D3"/>
+  <text x="1047" y="455" class="module" >LLM</text>
+  <text x="1047" y="497" class="secondary" >Meeting notes</text>
+  <path d="M805 440H1004" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M260 532V584H944V490H1004" class="arrow" marker-end="url(#arrowhead)"/>
+  <path d="M1177 532V699" class="arrow" marker-end="url(#arrowhead)"/>
+  <text x="80" y="637" class="caption" >Choose each model independently.</text>
+  <text x="1340" y="637" class="caption" text-anchor="end">Local or cloud</text>
+  <text x="80" y="692" class="step" >03  REVISIT</text>
+  <rect x="80" y="710" width="1260" height="112" rx="24" fill="#52683B" stroke="#52683B"/>
+  <g transform="translate(111 744)" fill="none" stroke="#EBF0E3" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M1 10V6a4 4 0 0 1 4-4h11l5 6h15a4 4 0 0 1 4 4v25a4 4 0 0 1-4 4H5a4 4 0 0 1-4-4Z"/></g>
+  <text x="174" y="755" class="archivetitle" >One meeting folder</text>
+  <text x="174" y="789" class="archivesubtitle" >Originals + evidence + notes</text>
+  <g transform="translate(725 749)" fill="none" stroke="#EBF0E3" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><circle cx="17" cy="17" r="16"/><path d="m13 9 12 8-12 8Z"/></g>
+  <text x="772" y="773" class="archiveaction" >Playback</text>
+  <g transform="translate(943 749)" fill="none" stroke="#EBF0E3" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="1" width="12" height="12" rx="3"/><rect x="21" y="1" width="12" height="12" rx="3"/><rect x="1" y="21" width="12" height="12" rx="3"/><rect x="21" y="21" width="12" height="12" rx="3"/></g>
+  <text x="991" y="773" class="archiveaction" >Projects</text>
+  <g transform="translate(1152 749)" fill="none" stroke="#EBF0E3" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M17 22V1m-8 8 8-8 8 8M1 19v13h32V19"/></g>
+  <text x="1200" y="773" class="archiveaction" >Export</text>
+</svg>
