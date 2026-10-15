@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.10">Download for Mac</a> ·
+  <a href="https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12">Download for Mac</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#a-quick-look">Screenshots</a> ·
   <a href="#choose-your-models">Models</a> ·
@@ -27,7 +27,7 @@ MinuteShelf keeps the original meeting on your Mac, then helps you revisit it wi
 
 **Privacy by default, model choice by task.** Capture and storage are local. Use local models for local inference, or explicitly allow a remote provider for STT, VLM, or LLM work. Remote analysis sends only the content categories you approve; signing in or saving a model choice does not upload a meeting.
 
-**Status:** 0.1.10 development preview. The app is now **MinuteShelf**. Its legacy bundle identifier and storage path are retained so existing Meeting Archive installations can keep their data and credential scope. Recording and playback have passed bounded real-world tests. Analysis adapters are implemented, with accuracy and real cloud-account validation still in progress.
+**Status:** 0.1.12 development preview. The app is now **MinuteShelf**. Its legacy bundle identifier and storage path are retained so existing Meeting Archive installations can keep their data and credential scope. Recording and playback have passed bounded real-world tests. Analysis adapters are implemented, with accuracy and real cloud-account validation still in progress.
 
 ## Record once. Choose how to understand it.
 
@@ -39,7 +39,7 @@ Capture stays local. After the meeting, choose a **speech model (STT)**, a **vis
 
 ## A quick look
 
-Current MinuteShelf interface using an isolated synthetic demo. Transcript and summary examples are fixtures, not results from a real meeting or a model-quality benchmark. Click a screenshot to view it at full size.
+Interface examples from an isolated synthetic demo of 0.1.10. Version 0.1.12 simplifies playback to one continuous audio track and adds expandable project notes in the sidebar. Transcript and summary examples are fixtures, not results from a real meeting or a model-quality benchmark. Click a screenshot to view it at full size.
 
 <table>
   <tr>
@@ -76,7 +76,7 @@ Closing the app window leaves recording running. Quitting asks to stop and save.
 
 ### Download and install
 
-Download the [Apple Silicon DMG](https://github.com/infinitywings/minuteshelf/releases/download/v0.1.10/MinuteShelf-0.1.10-macOS-arm64.dmg), open it, and drag **MinuteShelf** into **Applications**. A ZIP and SHA-256 checksums are available on the [release page](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.10). Requires an M-series Mac and macOS 15+; Node.js and Codex are included.
+Download the [Apple Silicon DMG](https://github.com/infinitywings/minuteshelf/releases/download/v0.1.12/MinuteShelf-0.1.12-macOS-arm64.dmg), open it, and drag **MinuteShelf** into **Applications**. A ZIP and SHA-256 checksums are available on the [release page](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12). Requires an M-series Mac and macOS 15+; Node.js and Codex are included.
 
 This development preview is **ad-hoc signed, without Apple notarization**. macOS may block the first launch; if you trust the downloaded copy, use **System Settings → Privacy & Security → Open Anyway**. You do not need to disable Gatekeeper.
 

@@ -41,6 +41,24 @@ import Foundation
         let deleted = ArchiveShellSnapshot(value)?.deletedMeetings
         try check(deleted?.count == 1 && deleted?.first?.id == "deleted", "Recently Deleted must retain stable IDs and reject malformed rows")
         try check(deleted?.first?.title == "Restorable meeting", "Recently Deleted must display its own title")
+        let childMeetings: [[String: Any]] = (0..<12).map { ["id": "note-\($0)", "title": "Note \($0)", "status": "recorded", "projectId": $0 == 11 ? "other" : "project"] }
+        var treeValue: [String: Any] = ["version":1, "view":"meeting", "selectedMeetingId":"note-9", "selectedProjectId":"project",
+            "projects":[["id":"project","name":"Research"],["id":"other","name":"Other project"]], "meetings":childMeetings]
+        let tree = ArchiveShellSnapshot(treeValue)!
+        let collapsed = ArchiveSidebarRow.build(tree, expanded: [])
+        try check(!collapsed.contains(where: { $0.key.hasPrefix("project-note:") }), "Collapsed projects must hide their children")
+        let expanded = ArchiveSidebarRow.build(tree, expanded: ["project"])
+        try check(expanded.filter { $0.key.hasPrefix("project-note:project:") }.count == 11, "Project children must include notes beyond the Recent Meetings limit")
+        try check(!expanded.contains(where: { $0.key == "project-note:project:note-11" }), "Notes from other projects must not leak into a folder")
+        try check(ArchiveSidebarRow.selectedKey(tree, expanded: ["project"]) == "project-note:project:note-9", "Expanded projects must highlight the selected child")
+        try check(Set(expanded.map(\.key)).count == expanded.count, "Project and recent rows need distinct stable keys")
+        try check(expanded.first(where: { $0.key == "project-note:project:note-9" })?.meeting?.id == "note-9", "Child context menus must retain the meeting ID")
+        var moved = childMeetings; moved[9]["projectId"] = "other"; moved[0]["title"] = "Renamed note"
+        treeValue["meetings"] = moved
+        let refreshed = ArchiveSidebarRow.build(ArchiveShellSnapshot(treeValue)!, expanded: ["project","other"])
+        try check(!refreshed.contains(where: { $0.key == "project-note:project:note-9" }), "Reassignment must remove the old child row")
+        try check(refreshed.contains(where: { $0.key == "project-note:other:note-9" }), "Reassignment must add the new child row")
+        try check(refreshed.first(where: { $0.key == "project-note:project:note-0" })?.title == "Renamed note", "Polling must update child titles without changing stable IDs")
         print("MeetingArchiveShellTests: \(checks) checks passed (no UI, permissions, or user data opened).")
     }
 }

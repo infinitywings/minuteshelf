@@ -1,10 +1,10 @@
 # Install or update MinuteShelf
 
-Version **0.1.10 development preview** supports Apple Silicon Macs running macOS 15 or later. Download the DMG, ZIP, installation notes, and SHA-256 file from the [GitHub release](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.10).
+Version **0.1.12 development preview** supports Apple Silicon Macs running macOS 15 or later. Download the DMG, ZIP, installation notes, and SHA-256 file from the [GitHub release](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12).
 
 ## New installation
 
-1. Download `MinuteShelf-0.1.10-macOS-arm64.dmg`.
+1. Download `MinuteShelf-0.1.12-macOS-arm64.dmg`.
 2. Open it and drag **MinuteShelf.app** to **Applications**.
 3. Eject the disk image and open **MinuteShelf** from Applications.
 4. Use **Settings → General → Permissions** to request access when needed. Grant Screen & System Audio Recording for screen capture, and Microphone if you enable that source. Accessibility is not required by the current recorder.
@@ -22,7 +22,7 @@ If macOS blocks the first launch and you trust this copy, attempt to open it onc
 For a terminal checksum check, put the downloaded assets and `.sha256` file in the same directory and run:
 
 ```sh
-shasum -a 256 -c MinuteShelf-0.1.10-macOS-arm64.sha256
+shasum -a 256 -c MinuteShelf-0.1.12-macOS-arm64.sha256
 ```
 
 The checksum file lists both the DMG and ZIP; a missing-file message means the corresponding asset has not been downloaded.

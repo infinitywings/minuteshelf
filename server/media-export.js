@@ -66,6 +66,17 @@ function workerLive(state) {
   const command = spawnSync('/bin/ps', ['-p', String(state.pid), '-o', 'comm='], { encoding: 'utf8' }).stdout?.trim() || '';
   return /(?:^|\/)archive-export$/.test(command);
 }
+function playbackRevision(archives, manifest) {
+  const root = archives.dir(manifest.id);
+  const audio = [...manifest.segments, ...(manifest.recovered || [])].filter(s => ['system', 'microphone'].includes(s.kind));
+  const files = audio.map(s => {
+    const media = relativeFile(root, `${s.recovered ? 'derived/recovery' : 'raw'}/${s.file}`);
+    const index = relativeFile(root, `raw/${s.index}`);
+    const signature = file => { const stat = fs.statSync(file); return [stat.size, stat.mtimeMs]; };
+    return [s.kind, s.file, s.startPTS, s.endPTS, s.frames, s.sampleRate, signature(media), signature(index)];
+  }).sort((a, b) => a[1].localeCompare(b[1]));
+  return crypto.createHash('sha256').update(JSON.stringify({ version: 1, duration: manifest.durationSeconds, origin: manifest.timeline?.originPTS, files })).digest('hex');
+}
 class MediaExports {
   constructor(archives, artifacts, { binary = path.join(__dirname, '..', '.build', 'archive-export'), spawnWorker = spawn } = {}) {
     this.archives = archives; this.artifacts = artifacts; this.binary = binary; this.spawnWorker = spawnWorker;
@@ -96,14 +107,40 @@ class MediaExports {
     }).filter(Boolean).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
   active() { return this.archives.ids().flatMap(id => this.jobStates(id).filter(workerLive).map(job => ({ meetingId: id, job }))); }
+  playback(id, { create = false } = {}) {
+    const manifest = this.archives.refresh(id);
+    if (['starting', 'recording', 'paused', 'finalizing'].includes(manifest.status) || isLive(this.archives.status(id))) return { status: 'recording' };
+    if (![...manifest.segments, ...(manifest.recovered || [])].some(s => ['system', 'microphone'].includes(s.kind))) return { status: 'video-only' };
+    const revision = playbackRevision(this.archives, manifest);
+    const job = this.jobStates(id).find(j => j.purpose === 'playback' && j.inputRevision === revision);
+    const audio = job?.files?.find(f => f.path === `exports/${job.id}/recording.m4a`);
+    if (job?.status === 'ready' && audio) {
+      try {
+        const file = relativeFile(this.archives.dir(id), audio.path);
+        if (fs.statSync(file).size > 0) return { status: 'ready', revision, jobId: job.id, path: audio.path, durationSeconds: manifest.durationSeconds };
+      } catch { /* Rebuild a missing cache; raw recordings are unchanged. */ }
+    }
+    if (job && ['queued', 'processing'].includes(job.status)) return { status: 'preparing', revision, jobId: job.id, progress: job.progress || 0 };
+    if (create) {
+      try {
+        const started = this.start(id, { audioOnly: true, purpose: 'playback', inputRevision: revision });
+        return { status: 'preparing', revision, jobId: started.id, progress: 0 };
+      } catch (error) { if (error.statusCode === 409) return { status: 'blocked', error: error.message }; throw error; }
+    }
+    return { status: job?.status === 'ready' ? 'missing' : job?.status || 'missing', revision, error: job?.error };
+  }
   start(id, options = {}) {
     if (!fs.existsSync(this.binary)) throw fail('Build the media export helper with npm run build:native first.');
     if (this.archives.active().length || this.inFlight.size || this.active().length) throw fail('A recording or media export is running. Try again later.', 409);
     const plan = exportPlan(this.archives, id, options), root = this.artifacts.ensure(id), jobId = crypto.randomUUID();
+    // A playback cache merges every captured audio source once, retaining PTS
+    // gaps. It never waits for full-resolution video re-encoding.
+    if (options.audioOnly === true) plan.video = [];
     const directory = path.join(root, 'exports', jobId); fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
     atomicWrite(path.join(directory, 'export-plan.json'), JSON.stringify(plan, null, 2));
     const stateFile = path.join(directory, 'export-status.json'), createdAt = new Date().toISOString();
-    const state = { id: jobId, meetingId: id, createdAt, status: 'queued', progress: 0, files: [] };
+    const state = { id: jobId, meetingId: id, createdAt, status: 'queued', progress: 0, files: [],
+      ...(options.purpose === 'playback' ? { purpose: 'playback', inputRevision: options.inputRevision } : {}) };
     atomicWrite(stateFile, JSON.stringify(state, null, 2));
     const log = fs.openSync(path.join(directory, 'worker.log'), 'a', 0o600);
     try {

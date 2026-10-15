@@ -1,12 +1,19 @@
 {
   "name": "minuteshelf",
-  "version": "0.1.10",
+  "version": "0.1.12",
   "description": "MinuteShelf: a macOS meeting recorder with local speech and modular post-meeting AI.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/infinitywings/minuteshelf.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/infinitywings/minuteshelf.git"
+  },
   "homepage": "https://github.com/infinitywings/minuteshelf#readme",
-  "bugs": { "url": "https://github.com/infinitywings/minuteshelf/issues" },
-  "engines": { "node": ">=20" },
+  "bugs": {
+    "url": "https://github.com/infinitywings/minuteshelf/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "check:publication": "node tools/check-publication.mjs",
     "start": "node server/index.js",

@@ -809,6 +809,8 @@ h2 {
 /* Playback and archived evidence. */
 .session-controls { display: flex; align-items: center; gap: 14px; }
 .session-controls button { min-width: 78px; }
+.playback-volume { display:flex; align-items:center; gap:10px; margin:0; font-size:12px; }
+.playback-volume input { width:110px; margin:0; }
 .session-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
 .video-gap { min-height: 200px; display: grid; place-items: center; padding: 32px; text-align: center; color: var(--text-secondary); background: var(--media-surface); border-radius: 8px; margin-top: 18px; }
 .video-gap[hidden] { display: none; }
