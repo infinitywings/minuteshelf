@@ -6,11 +6,11 @@ let captureSources = { windows:[], displays:[] }, sourceListRevision = 0, previe
 let localProjects = [], meetingCatalog = [], deletedMeetings = [], projectFilter = null, projectViewId = null, view = 'home', rkaState = null, rkaCatalog = [], firstRefresh = true;
 let artifactState = null, exportSignature = '', exportPolling = false;
 let notesTimer = null, notesRevision = 0, notesSaving = null, notesMeetingId = null, meetingTab = 'notes';
-let meetingLoadRevision = 0, meetingLoading = false, audioIndexError = null;
-let audioPlaybackError = null;
+let meetingLoadRevision = 0, meetingLoading = false;
+let meetingPlayback = null, playbackRequest = null, audioReady = null, meetingPlayError = null;
 let sourceJumpRevision = 0;
 let playbackGroup = 'raw';
-let rawPosition = 0, rawPlaying = false, rawStartedAt = 0, rawStartedPosition = 0, videoLoadRevision = 0, playbackRevision = 0, audioSyncRevision = 0, videoLoadError = null;
+let rawPosition = 0, rawPlaying = false, rawStartedAt = 0, rawStartedPosition = 0, videoLoadRevision = 0, playbackRevision = 0, videoLoadError = null;
 let timelineGesture = null, lastTimelineCommit = null;
 const audioIndexes = new Map();
 let permissionState = null, permissionTask = null, archiveRoot = '', settingsReturnFocus = null, closeTask = null, composingText = false;
@@ -423,8 +423,9 @@ function showView(name) {
 }
 function selectMeetingTab(name, focus = false) {
   const leavingFocusedPanel = name !== meetingTab && $(`panel-${meetingTab}`).contains(document.activeElement);
-  if (name !== 'playback') { pauseRawPlayback(); $('standalone-audio').pause(); $('merged-video').pause(); }
+  if (name !== 'playback') pauseRawPlayback();
   meetingTab = name;
+  if (name === 'playback' && current) void ensureMeetingPlayback(true).catch(e => showMessage(e.message));
   for (const key of ['notes','playback','artifacts','context']) {
     $(`panel-${key}`).hidden = key !== name;
     $(`tab-${key}`).setAttribute('aria-selected', String(key === name));
@@ -471,8 +472,7 @@ async function openMeeting(id) {
     const value = await api(`/api/meetings/${id}`);
     if (revision !== meetingLoadRevision) return;
     // Commit the selected meeting and its editor together, only after a successful load.
-    selected = id; sourceClip = null; $('video').pause(); $('video').removeAttribute('src'); $('standalone-audio').pause(); $('standalone-audio').removeAttribute('src'); $('standalone-audio').dataset.clip = '';
-    $('merged-video').pause(); $('merged-video').removeAttribute('src'); $('merged-preview').hidden = true;
+    pauseRawPlayback(); selected = id; sourceClip = null; $('video').pause(); $('video').removeAttribute('src'); resetMeetingAudio();
     pauseAudio(); showView('meeting'); selectMeetingTab('notes'); rkaState = null; $('rka-records').replaceChildren(); $('rka-state').textContent = 'Loading context settings…';
     $('rka-save').disabled = true; $('rka-refresh').disabled = true;
     artifactState = null; exportSignature = ''; $('archive-path').textContent = 'Loading meeting folder…';
@@ -496,7 +496,10 @@ function allClips() { return [...(current?.manifest.segments || []), ...(current
 function videoClips() { return allClips().filter(s => s.kind === 'video').sort((a,b) => a.startPTS.seconds - b.startPTS.seconds); }
 const playbackNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
 function sessionDuration() { return Math.max(0, Number(current?.manifest.durationSeconds) || 0); }
-function sessionPosition() { return rawPlaying ? Math.min(sessionDuration(), rawStartedPosition + (playbackNow() - rawStartedAt) / 1000) : rawPosition; }
+function sessionPosition() {
+  if (rawPlaying && hasMeetingAudio() && meetingPlayback?.status === 'ready') return Math.min(sessionDuration(), $('meeting-audio').currentTime || 0);
+  return rawPlaying ? Math.min(sessionDuration(), rawStartedPosition + (playbackNow() - rawStartedAt) / 1000) : rawPosition;
+}
 function currentTimelineGesture(gesture = timelineGesture) { return gesture && gesture.id === selected && gesture.revision === meetingLoadRevision; }
 function renderSessionPosition(position = sessionPosition()) {
   // A timer or metadata refresh must not move the native range thumb between
@@ -551,6 +554,9 @@ function pauseRawPlayback() {
   $('video').pause(); pauseAudio(); renderSessionPosition();
 }
 function renderMeeting(value, initial) {
+  const audioKey = manifest => JSON.stringify([manifest?.durationSeconds, manifest?.timeline?.originPTS,
+    [...(manifest?.segments || []), ...(manifest?.recovered || [])].filter(s => ['system','microphone'].includes(s.kind)).map(s => [s.file,s.frames,s.startPTS,s.endPTS,s.recovered])]);
+  if (!initial && current && audioKey(current.manifest) !== audioKey(value.manifest)) { pauseRawPlayback(); resetMeetingAudio(); }
   current = value; const m = value.manifest;
   showView('meeting'); $('heading').textContent = m.title;
   const active = ['recording','paused'].includes(m.status), live = active || m.status === 'finalizing';
@@ -572,14 +578,14 @@ function renderMeeting(value, initial) {
   $('bookmark').disabled = !active;
   $('clock').textContent = `Duration ${seconds(m.durationSeconds)}`;
   $('size').textContent = `${(m.bytes / 1e9).toFixed(3)} GB${m.durationSeconds > 60 ? ` · ${(m.bytes / 1e9 * 3600 / m.durationSeconds).toFixed(2)} GB/hour` : ''}`;
-  $('level-mic').textContent = active ? `Microphone ${m.capture?.micEnabled ? (m.capture.levels?.microphone || 0).toFixed(2) : 'Off'}` : `Microphone · ${countLabel(m.segments.filter(s=>s.kind==='microphone').length, 'segment')}`;
-  $('level-system').textContent = active ? `System audio ${m.selection.systemAudio ? (m.capture?.levels?.system || 0).toFixed(2) : 'Off'}` : `System audio · ${countLabel(m.segments.filter(s=>s.kind==='system').length, 'segment')}`;
+  $('level-mic').textContent = active ? `Microphone ${m.capture?.micEnabled ? (m.capture.levels?.microphone || 0).toFixed(2) : 'Off'}` : '';
+  $('level-system').textContent = active ? `System audio ${m.selection.systemAudio ? (m.capture?.levels?.system || 0).toFixed(2) : 'Off'}` : '';
   const last = m.capture?.lastWrittenPTS?.video?.seconds;
   const elapsed = m.capture?.clockPTS?.seconds - last;
-  $('write-health').textContent = m.status === 'paused' ? 'Recording paused' : unavailable ? 'No current video from the selected source' : (active && Number.isFinite(elapsed) ? `Last video write ${elapsed.toFixed(1)} seconds ago` : `${countLabel(m.segments.length, 'media segment')} saved`);
+  $('write-health').textContent = m.status === 'paused' ? 'Recording paused' : unavailable ? 'No current video from the selected source' : (active && Number.isFinite(elapsed) ? `Last video write ${elapsed.toFixed(1)} seconds ago` : 'Original media saved');
   $('timeline').max = Math.max(1, m.durationSeconds || 1);
   $('manifest').href = `/api/meetings/${selected}/manifest`;
-  if (initial) { rawPlaying = false; rawPosition = 0; playbackGroup = 'raw'; videoLoadError = null; videoLoadRevision++; sourceClip = null; $('video').pause(); pauseAudio(); notesMeetingId = m.id; $('notes').value = value.notes; sizeNotes(); notesDirty = false; notesRevision++; $('notes-state').textContent = value.notes ? 'Saved' : ''; $('meeting-project').value = value.projectId || ''; }
+  if (initial) { rawPlaying = false; rawPosition = 0; playbackGroup = 'raw'; videoLoadError = null; videoLoadRevision++; sourceClip = null; $('video').pause(); resetMeetingAudio(); notesMeetingId = m.id; $('notes').value = value.notes; sizeNotes(); notesDirty = false; notesRevision++; $('notes-state').textContent = value.notes ? 'Saved' : ''; $('meeting-project').value = value.projectId || ''; }
   $('open-project').hidden = !value.projectId;
   updateList('gaps', [m.id, m.gaps, m.interruptedTail, origin()], root => {
   root.replaceChildren();
@@ -597,28 +603,96 @@ function renderMeeting(value, initial) {
     for (const [index, b] of (m.bookmarks || []).entries()) { const button = document.createElement('button'); button.className = 'bookmark'; button.dataset.focusKey = b.id || `${b.pts.seconds}/${index}`; button.textContent = `${seconds(b.pts.seconds - origin())}  ${b.text || 'Bookmark'}`; button.onclick = run(() => { selectMeetingTab('playback'); return seek(b.pts.seconds - origin(), false); }); root.append(button); }
   }, 'bookmark-text');
   const clips = videoClips(); $('video-empty').hidden = clips.length > 0;
-  updateList('segments', [m.id, clips.map(c => [c.file, c.startPTS, c.endPTS]), origin()], root => {
-    root.replaceChildren();
-    for (const clip of clips) { const button = document.createElement('button'); button.className = 'segment'; button.dataset.focusKey = clip.file; button.textContent = `${seconds(clip.startPTS.seconds - origin())}–${seconds(clip.endPTS.seconds - origin())}`; button.onclick = run(() => seek(clip.startPTS.seconds - origin(), false)); root.append(button); }
-  }, 'timeline');
   renderSessionPosition(playbackGroup === 'raw' ? sessionPosition() : Number($('timeline').value));
   if (playbackGroup === 'raw') updateSessionVideo();
-  renderAudioPicker();
+  if (initial) { meetingPlayback = hasMeetingAudio() ? null : {status:'video-only'}; renderPlaybackState(); }
+  if (meetingTab === 'playback' && !meetingPlayback) void ensureMeetingPlayback(true).catch(e => showMessage(e.message));
 }
-function renderAudioPicker() {
-  if (!current) return;
-  const source = $('audio-source').value, previous = $('audio-clip').value;
-  const clips = [...current.manifest.segments, ...(current.manifest.recovered || [])].filter(s=>s.kind===source).sort((a,b)=>a.startPTS.seconds-b.startPTS.seconds);
-  updateOptions($('audio-clip'), [['Choose an audio segment',''], ...clips.map(c => [`${seconds(c.startPTS.seconds-origin())}–${seconds(c.endPTS.seconds-origin())}${c.recovered?' · Recovered':''}`, c.file])], previous);
+function hasMeetingAudio() { return allClips().some(c => ['system','microphone'].includes(c.kind)); }
+function resetMeetingAudio() {
+  const audio = $('meeting-audio'); audio.pause();
+  audioReady?.reject(new Error('Playback selection changed.'));
+  audioReady = null; meetingPlayback = null; playbackRequest = null; meetingPlayError = null;
+  audio.onloadedmetadata = null; audio.onerror = null; audio.removeAttribute('src'); audio.dataset.clip = '';
 }
-function pauseAudio() { $('audio-system').pause(); $('audio-microphone').pause(); }
+function pauseAudio() { $('meeting-audio').pause(); }
 function activatePlayback(group) {
   if (group !== 'raw') pauseRawPlayback();
   playbackGroup = group;
-  for (const [name, id] of [['raw','video'], ['merged','merged-video'], ['standalone','standalone-audio']]) {
-    if (name !== group) $(id).pause();
+}
+function renderPlaybackState() {
+  const state = meetingPlayback?.status;
+  const labels = {
+    recording:'Playback is available after the recording is saved.',
+    preparing:'Preparing continuous meeting audio…',
+    ready:'Meeting audio is ready.',
+    'video-only':'No audio was recorded for this meeting.',
+    missing:'Prepare this meeting for continuous playback.',
+    failed:'Playback preparation failed.',
+    interrupted:'Playback preparation was interrupted.',
+    blocked:'Playback preparation is waiting.'
+  };
+  $('playback-state').textContent = (labels[state] || 'Preparing playback…')
+    + (state === 'preparing' ? ` ${Math.round((meetingPlayback.progress || 0) * 100)}%` : '')
+    + (meetingPlayback?.error ? ` ${meetingPlayback.error}` : '');
+  $('playback-prepare').hidden = !['missing','failed','interrupted','blocked'].includes(state);
+  $('playback-prepare').textContent = state === 'missing' ? 'Prepare playback' : 'Retry preparation';
+  $('play-session').disabled = !['ready','video-only'].includes(state);
+  if (state === 'ready' && audioReady && !audioReady.loaded) $('playback-state').textContent = 'Loading meeting audio…';
+}
+function applyPlaybackState(state) {
+  meetingPlayback = state;
+  if (state.status === 'ready') {
+    const audio = $('meeting-audio'), url = artifactURL(selected, state.path, true);
+    if (audio.dataset.clip !== url) {
+      audioReady?.reject(new Error('Playback audio changed.'));
+      let resolve, reject;
+      const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+      promise.catch(() => {}); // Metadata can arrive before a Play request.
+      const ready = { promise, resolve, reject, loaded:false, id:selected, revision:meetingLoadRevision };
+      audioReady = ready; audio.dataset.clip = url;
+      const valid = () => audioReady === ready && ready.id === selected && ready.revision === meetingLoadRevision;
+      audio.onloadedmetadata = () => {
+        if (!valid()) return;
+        if (Number.isFinite(audio.duration) && Math.abs(audio.duration - sessionDuration()) > .15) {
+          ready.reject(new Error('Prepared audio does not match the meeting timeline.'));
+          meetingPlayback = { status:'failed', error:'Prepared audio has an unexpected duration.' }; renderPlaybackState(); return;
+        }
+        ready.loaded = true; audio.currentTime = Math.min(rawPosition, Number.isFinite(audio.duration) ? audio.duration : rawPosition);
+        ready.resolve(); renderPlaybackState();
+      };
+      audio.onerror = () => {
+        if (!valid()) return;
+        const error = new Error('Meeting audio could not load. Retry preparation.');
+        ready.reject(error); pauseRawPlayback();
+        meetingPlayback = { status:'failed', error:error.message }; renderPlaybackState();
+      };
+      audio.src = url; audio.load();
+    }
   }
-  if (group !== 'raw') pauseAudio();
+  renderPlaybackState();
+}
+async function ensureMeetingPlayback(create = false) {
+  if (!selected || !current) return;
+  if (['starting','recording','paused','finalizing'].includes(current.manifest.status)) {
+    applyPlaybackState({status:'recording'}); return meetingPlayback;
+  }
+  if (!hasMeetingAudio()) { applyPlaybackState({status:'video-only'}); return meetingPlayback; }
+  if (playbackRequest) return playbackRequest;
+  if (meetingPlayback?.status === 'ready' && audioReady?.loaded) return meetingPlayback;
+  const id = selected, revision = meetingLoadRevision;
+  const request = (async () => {
+    let state = await api(`/api/meetings/${id}/playback`);
+    if (id !== selected || revision !== meetingLoadRevision) return;
+    if (create && !['ready','preparing','recording','video-only'].includes(state.status)) state = await post(`/api/meetings/${id}/playback`);
+    if (id !== selected || revision !== meetingLoadRevision) return;
+    if (create && state.status === 'ready' && meetingPlayback?.status === 'failed') $('meeting-audio').dataset.clip = '';
+    applyPlaybackState(state); return state;
+  })();
+  playbackRequest = request;
+  try { return await request; }
+  catch (error) { if (id === selected && revision === meetingLoadRevision) applyPlaybackState({status:'failed',error:error.message}); throw error; }
+  finally { if (playbackRequest === request) playbackRequest = null; }
 }
 function loadVideo(clip) {
   sourceClip = clip; const video = $('video'); switching = true;
@@ -632,13 +706,14 @@ function loadVideo(clip) {
     switching = false;
     if (rawPlaying && playbackGroup === 'raw') playRawVideo();
   };
-  video.onerror = () => { if (revision === videoLoadRevision && id === selected) { switching = false; pauseRawPlayback(); videoLoadError = clip.file; sourceClip = null; updateSessionVideo(); } };
+  video.muted = true;
+  video.onerror = () => { if (revision === videoLoadRevision && id === selected) { switching = false; videoLoadError = clip.file; sourceClip = null; updateSessionVideo(); } };
   video.load();
 }
 function playRawVideo() {
   const id = selected, revision = videoLoadRevision, epoch = playbackRevision;
   $('video').play().catch(error => {
-    if (id === selected && revision === videoLoadRevision && epoch === playbackRevision && playbackGroup === 'raw' && rawPlaying) { pauseRawPlayback(); showMessage(error.message); }
+    if (id === selected && revision === videoLoadRevision && epoch === playbackRevision && playbackGroup === 'raw' && rawPlaying) { videoLoadError = sourceClip?.file; showMessage(`The picture could not play. Meeting audio continues. ${error.message}`); }
   });
 }
 // The meeting clock, rather than a two-second video file, owns playback time.
@@ -668,7 +743,7 @@ async function updateSessionPlayback() {
   if (!current || playbackGroup !== 'raw') return;
   const position = sessionPosition();
   if (rawPlaying && position >= sessionDuration()) pauseRawPlayback();
-  renderSessionPosition(position); updateSessionVideo(); await syncAudio();
+  renderSessionPosition(position); updateSessionVideo();
 }
 async function seek(relative, play) {
   sourceJumpRevision++;
@@ -676,7 +751,27 @@ async function seek(relative, play) {
   activatePlayback('raw');
   videoLoadError = null;
   rawPosition = Math.max(0, Math.min(Number(relative) || 0, sessionDuration()));
-  if (play && rawPosition < sessionDuration()) { rawPlaying = true; rawStartedAt = playbackNow(); rawStartedPosition = rawPosition; }
+  const id = selected, revision = playbackRevision;
+  if (hasMeetingAudio()) {
+    try { await ensureMeetingPlayback(true); }
+    catch (error) { if (id !== selected || revision !== playbackRevision) return; throw error; }
+    if (id !== selected || revision !== playbackRevision) return;
+    if (meetingPlayback?.status !== 'ready') { renderSessionPosition(); updateSessionVideo(); return; }
+    try { await audioReady?.promise; }
+    catch (error) { if (id !== selected || revision !== playbackRevision) return; throw error; }
+    if (id !== selected || revision !== playbackRevision) return;
+    $('meeting-audio').currentTime = rawPosition;
+  }
+  if (play && rawPosition < sessionDuration()) {
+    rawPlaying = true; rawStartedAt = playbackNow(); rawStartedPosition = rawPosition;
+    if (hasMeetingAudio()) {
+      try { await $('meeting-audio').play(); }
+      catch (error) { if (id === selected && revision === playbackRevision) { pauseRawPlayback(); meetingPlayError = `Meeting audio could not start: ${error.message}. Press Play to retry.`; throw new Error(meetingPlayError); } }
+      if (id !== selected || revision !== playbackRevision) { if (!rawPlaying) pauseAudio(); return; }
+      if (meetingPlayError && $('message').textContent === meetingPlayError) showMessage('');
+      meetingPlayError = null;
+    }
+  }
   // Explicit seeks reposition even within the same fragment.
   if (sourceClip && sourceClip.startPTS.seconds <= origin() + rawPosition && sourceClip.endPTS.seconds > origin() + rawPosition) $('video').currentTime = Math.max(0, origin() + rawPosition - sourceClip.startPTS.seconds);
   await updateSessionPlayback();
@@ -691,8 +786,7 @@ async function jumpToSource(evidence) {
   const originalTime = origin() + evidence.startMs / 1000;
   const source = ['system', 'microphone'].includes(evidence.source) ? evidence.source : null;
   selectMeetingTab('playback'); activatePlayback('none'); pauseAudio();
-  if (source) { $('listen-system').checked = source === 'system'; $('listen-mic').checked = source === 'microphone'; }
-  let time = Math.max(origin(), originalTime - 2), audioClip, audioOffset;
+  let time = Math.max(origin(), originalTime - 2), audioClip;
   if (source) {
     audioClip = [...current.manifest.segments, ...(current.manifest.recovered || [])].find(clip => clip.kind === source && clip.startPTS?.seconds <= originalTime && clip.endPTS?.seconds > originalTime);
     if (!audioClip || !Number.isFinite(audioClip.sampleRate) || audioClip.sampleRate <= 0) throw new Error(`No saved ${source === 'microphone' ? 'microphone' : 'system'} audio covers this evidence time. Other sources were not substituted.`);
@@ -718,102 +812,10 @@ async function jumpToSource(evidence) {
     time = Math.max(time, mapped[first].pts.seconds);
     const record = mapped.slice(first, index + 1).find(value => value.pts.seconds <= time && value.end > time) || mapped[index];
     time = Math.max(time, record.pts.seconds);
-    audioOffset = record.frameOffset / audioClip.sampleRate + time - record.pts.seconds;
   }
   if (!isCurrent()) return;
-  const video = videoClips().find(clip => clip.startPTS.seconds <= originalTime && clip.endPTS.seconds > originalTime);
-  if (video) { await seek(Math.max(time, video.startPTS.seconds) - origin(), false); return; }
-  if (!audioClip) {
-    $('standalone-audio').closest('details')?.setAttribute('open', '');
-    throw new Error('No saved video covers this imported transcript time. Choose an original source under Audio-only playback; the transcript does not identify one.');
-  }
-  const player = $('standalone-audio');
-  activatePlayback('standalone');
-  $('audio-source').value = source; renderAudioPicker(); $('audio-clip').value = audioClip.file;
-  player.closest('details')?.setAttribute('open', ''); player.hidden = false; player.dataset.clip = audioClip.file;
-  player.onloadedmetadata = () => {
-    if (!isCurrent() || player.dataset.clip !== audioClip.file) return;
-    if (Number.isFinite(player.duration) && audioOffset >= player.duration) { showMessage('The audio file is shorter than its saved index. Check the original recording.'); return; }
-    player.currentTime = audioOffset; player.pause();
-  };
-  player.onerror = () => { if (isCurrent()) showMessage('The original audio could not be loaded. Retry the evidence link.'); };
-  player.src = `/api/meetings/${id}/media/${audioClip.file}`; player.load();
-  rawPosition = time - origin(); renderSessionPosition();
-  showMessage(`Positioned ${source === 'microphone' ? 'microphone' : 'system'} audio at ${seconds(time - origin())}. Press Play under Audio-only playback.`);
-}
-async function syncAudio() {
-  if (!current || playbackGroup !== 'raw') return;
-  const syncRevision = ++audioSyncRevision, playbackAtStart = playbackRevision;
-  const playing = rawPlaying;
-  const relative = sessionPosition();
-  const global = origin() + relative;
-  renderSessionPosition(relative);
-  const selectedAtStart = selected, revision = meetingLoadRevision, jumpRevision = sourceJumpRevision;
-  for (const source of ['system', 'microphone']) {
-    const element = $(`audio-${source}`), enabled = $(source === 'system' ? 'listen-system' : 'listen-mic').checked;
-    if (!enabled || !playing) { element.pause(); continue; }
-    const clip = [...current.manifest.segments, ...(current.manifest.recovered || [])].find(c => c.kind === source && c.startPTS?.seconds <= global && c.endPTS?.seconds > global);
-    if (!clip) { element.pause(); continue; }
-    // Map clock PTS to sample offsets, including gaps within an audio segment.
-    const key = `${selected}/${clip.file}`;
-    if (!audioIndexes.has(key)) {
-      const request = api(`/api/meetings/${selected}/index/${clip.file}`).catch(error => {
-        if (audioIndexes.get(key) === request) audioIndexes.delete(key);
-        throw error;
-      });
-      audioIndexes.set(key, request);
-      if (audioIndexes.size > 64) audioIndexes.delete(audioIndexes.keys().next().value);
-    }
-    let records;
-    try { records = await audioIndexes.get(key); }
-    catch (error) {
-      if (selectedAtStart === selected && revision === meetingLoadRevision && jumpRevision === sourceJumpRevision && playbackGroup === 'raw' && playbackAtStart === playbackRevision && syncRevision === audioSyncRevision) {
-        pauseRawPlayback();
-        audioIndexError = { key, message:`Could not load the audio index: ${error.message}. Press Play to retry.` };
-        showMessage(audioIndexError.message);
-      }
-      return;
-    }
-    if (selectedAtStart !== selected || revision !== meetingLoadRevision || jumpRevision !== sourceJumpRevision || playbackGroup !== 'raw' || playbackAtStart !== playbackRevision || syncRevision !== audioSyncRevision || !rawPlaying) continue;
-    if (audioIndexError?.key === key) {
-      if ($('message').textContent === audioIndexError.message) showMessage('');
-      audioIndexError = null;
-    }
-    const record = records.find(r => r.pts.seconds <= global && r.pts.seconds + r.frames / clip.sampleRate > global);
-    if (!record) { element.pause(); continue; }
-    const offset = record.frameOffset / clip.sampleRate + global - record.pts.seconds;
-    const playSource = () => {
-      const isCurrent = () => selectedAtStart === selected && revision === meetingLoadRevision && jumpRevision === sourceJumpRevision
-        && playbackGroup === 'raw' && playbackAtStart === playbackRevision && element.dataset.clip === key
-        && rawPlaying && $(source === 'system' ? 'listen-system' : 'listen-mic').checked;
-      element.play().then(() => {
-        if (isCurrent() && audioPlaybackError?.key === key) {
-          if ($('message').textContent === audioPlaybackError.message) showMessage('');
-          audioPlaybackError = null;
-        }
-      }).catch(error => {
-        if (!isCurrent()) return;
-        pauseRawPlayback();
-        audioPlaybackError = { key, message:`${source === 'system' ? 'System audio' : 'Microphone audio'} could not start: ${error.message || 'Playback was blocked'}. Press Play to retry, or turn off this audio source.` };
-        showMessage(audioPlaybackError.message);
-      });
-    };
-    if (element.dataset.clip !== key) {
-      element.dataset.clip = key; element.src = `/api/meetings/${selected}/media/${clip.file}`;
-      element.onloadedmetadata = () => {
-        if (selectedAtStart !== selected || revision !== meetingLoadRevision || jumpRevision !== sourceJumpRevision || playbackGroup !== 'raw' || playbackAtStart !== playbackRevision || element.dataset.clip !== key) return;
-        const now = rawPlaying ? origin() + sessionPosition() : global;
-        const latest = records.find(value => value.pts.seconds <= now && value.pts.seconds + value.frames / clip.sampleRate > now);
-        if (!latest) { element.pause(); return; }
-        element.currentTime = latest.frameOffset / clip.sampleRate + now - latest.pts.seconds;
-        if (rawPlaying && $(source === 'system' ? 'listen-system' : 'listen-mic').checked) playSource();
-      };
-      element.load();
-    } else {
-      if (Math.abs(element.currentTime - offset) > .12) element.currentTime = offset;
-      if (element.paused) playSource();
-    }
-  }
+  await seek(time - origin(), false);
+
 }
 async function saveNotes() {
   if (!notesMeetingId || !notesDirty) return;
@@ -858,14 +860,7 @@ function renderExports(jobs) {
     root.replaceChildren();
     for (const [file, createdAt] of exportedFiles) root.append(artifactLink(selected, file, `${file.endsWith('.mp4') ? 'Meeting video with audio' : 'Full meeting audio'} · ${new Date(createdAt).toLocaleTimeString('en-US')}`));
   }, 'export-media');
-  const playable = jobs.find(j => j.status === 'ready' && j.files?.some(f => f.path.endsWith('.mp4') && artifactState?.entries.some(e => e.path === f.path)));
-  const file = playable?.files.find(f => f.path.endsWith('.mp4'));
-  $('merged-preview').hidden = !file;
-  if (file) {
-    const url = artifactURL(selected, file.path, true);
-    if ($('merged-video').getAttribute('src') !== url) { $('merged-video').pause(); $('merged-video').src = url; }
-    $('merged-download').href = artifactURL(selected, file.path);
-  }
+
 }
 async function pollExports() {
   if (!selected || !artifactState || exportPolling || !artifactState.exports.some(e => ['queued','processing'].includes(e.status))) return;
@@ -893,9 +888,8 @@ $('documents-import').onclick = run(async () => {
   finally { $('documents-import').disabled = false; }
 });
 $('export-media').onclick = run(async () => {
-  const id = selected, audioSources = [];
-  if ($('export-system').checked) audioSources.push('system'); if ($('export-mic').checked) audioSources.push('microphone');
-  await post(`/api/meetings/${id}/export-media`, {audioSources}); if (selected === id) await loadArtifacts(id);
+  const id = selected;
+  await post(`/api/meetings/${id}/export-media`); if (selected === id) await loadArtifacts(id);
 });
 function fillProjects(element, emptyLabel) {
   updateOptions(element, [[emptyLabel, ''], ...localProjects.map(p => [p.name, p.id])]);
@@ -913,7 +907,7 @@ function renderProjectNavigation() {
   updateNavigationCurrent();
   fillProjects($('setup-project'), 'No project'); fillProjects($('meeting-project'), 'No project');
 }
-function clearPlayback() { clearTimeout(notesTimer); pauseRawPlayback(); videoLoadRevision++; meetingLoadRevision++; selected = null; notesMeetingId = null; setMeetingLoading(false); current = null; sourceClip = null; $('standalone-audio').pause(); $('merged-video').pause(); }
+function clearPlayback() { clearTimeout(notesTimer); pauseRawPlayback(); videoLoadRevision++; meetingLoadRevision++; selected = null; notesMeetingId = null; setMeetingLoading(false); current = null; sourceClip = null; resetMeetingAudio(); }
 async function openProject(id = null) {
   const revision = ++meetingLoadRevision;
   let committed = false;
@@ -1102,21 +1096,18 @@ $('timeline').onkeydown = event => {
 };
 $('timeline').onkeyup = event => { if (timelineKeys.has(event.key)) return run(() => commitTimelineGesture('release'))(); };
 $('play-session').onclick = run(async () => { if (rawPlaying) pauseRawPlayback(); else await seek(rawPosition >= sessionDuration() ? 0 : rawPosition, true); });
-$('video').onplay = run(async () => {
-  // This element has no independent transport controls. A delayed media play
-  // event must never resurrect the session after the user pressed Pause.
-  if (playbackGroup !== 'raw' || !rawPlaying) { $('video').pause(); return; }
-  activatePlayback('raw');
-  await syncAudio();
-});
-$('audio-source').onchange = () => { sourceJumpRevision++; $('standalone-audio').pause(); $('standalone-audio').hidden = true; renderAudioPicker(); };
-$('audio-clip').onchange = () => { sourceJumpRevision++; const audio = $('standalone-audio'); audio.onloadedmetadata = null; audio.onerror = null; if (!$('audio-clip').value) { audio.pause(); audio.hidden = true; return; } audio.dataset.clip = $('audio-clip').value; audio.src = `/api/meetings/${selected}/media/${audio.dataset.clip}`; audio.hidden = false; audio.load(); };
-$('standalone-audio').onplay = () => activatePlayback('standalone');
-$('merged-video').onplay = () => activatePlayback('merged');
+$('playback-prepare').onclick = run(() => ensureMeetingPlayback(true));
+$('playback-volume').oninput = () => { $('meeting-audio').volume = Math.max(0, Math.min(1, Number($('playback-volume').value))); };
+$('meeting-audio').onended = () => { if (meetingPlayback?.status === 'ready') { pauseRawPlayback(); rawPosition = sessionDuration(); renderSessionPosition(); updateSessionVideo(); } };
+$('meeting-audio').onwaiting = () => { if (rawPlaying) $('playback-state').textContent = 'Buffering meeting audio…'; };
+$('meeting-audio').onplaying = () => { if (!rawPlaying) pauseAudio(); else renderPlaybackState(); };
+$('meeting-audio').ontimeupdate = () => { if (rawPlaying) { renderSessionPosition(); updateSessionVideo(); } };
+$('video').onplay = () => { if (playbackGroup !== 'raw' || !rawPlaying) $('video').pause(); };
 $('video').onended = run(updateSessionPlayback);
 setInterval(() => { if (connected && selected) updateSessionPlayback().catch(e=>showMessage(e.message)); },150);
 setInterval(() => { if (connected && !pendingDesktopCommands) refresh().catch(e=>showMessage(e.message)); },2500);
 setInterval(() => { if (connected) pollExports().catch(e=>showMessage(e.message)); },2000);
+setInterval(() => { if (connected && selected && meetingTab === 'playback' && meetingPlayback?.status === 'preparing') ensureMeetingPlayback(false).catch(e=>showMessage(e.message)); },1000);
 window.addEventListener('compositionstart', () => { composingText = true; });
 window.addEventListener('resize', () => { if (view === 'meeting' && meetingTab === 'notes') sizeNotes(); });
 window.addEventListener('compositionend', () => { composingText = false; });

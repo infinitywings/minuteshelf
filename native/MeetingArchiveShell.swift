@@ -98,14 +98,15 @@ struct ArchiveShellSnapshot {
     }
 }
 
-private enum ArchiveSidebarRow: Equatable {
-    case library, heading(String), project(ArchiveProjectRow), meeting(ArchiveMeetingRow), deletedMeeting(ArchiveDeletedMeetingRow), newProject
+enum ArchiveSidebarRow: Equatable {
+    case library, heading(String), project(ArchiveProjectRow), meeting(ArchiveMeetingRow), projectNote(String, ArchiveMeetingRow), deletedMeeting(ArchiveDeletedMeetingRow), newProject
     var key: String {
         switch self {
         case .library: return "library"
         case .heading(let text): return "heading:" + text
         case .project(let row): return "project:" + row.id
         case .meeting(let row): return "meeting:" + row.id
+        case .projectNote(let projectId, let row): return "project-note:" + projectId + ":" + row.id
         case .deletedMeeting(let row): return "deleted:" + row.id
         case .newProject: return "new-project"
         }
@@ -116,6 +117,7 @@ private enum ArchiveSidebarRow: Equatable {
         case .heading(let title): return title
         case .project(let row): return row.name
         case .meeting(let row): return row.title
+        case .projectNote(_, let row): return row.title
         case .deletedMeeting(let row): return row.title
         case .newProject: return "New Project…"
         }
@@ -124,11 +126,35 @@ private enum ArchiveSidebarRow: Equatable {
         switch self {
         case .library: return "tray.full"
         case .project: return "folder"
-        case .meeting(let row): return ["starting", "recording", "paused", "finalizing"].contains(row.status) ? "record.circle" : "doc.text"
+        case .meeting(let row), .projectNote(_, let row): return ["starting", "recording", "paused", "finalizing"].contains(row.status) ? "record.circle" : "doc.text"
         case .deletedMeeting: return "trash"
         case .newProject: return "plus"
         case .heading: return ""
         }
+    }
+    var meeting: ArchiveMeetingRow? {
+        switch self { case .meeting(let meeting), .projectNote(_, let meeting): return meeting; default: return nil }
+    }
+    static func build(_ snapshot: ArchiveShellSnapshot, expanded: Set<String>) -> [ArchiveSidebarRow] {
+        var result: [ArchiveSidebarRow] = [.library, .heading("Projects")]
+        for project in snapshot.projects {
+            result.append(.project(project))
+            if expanded.contains(project.id) {
+                result += snapshot.meetings.filter { $0.projectId == project.id }.map { .projectNote(project.id, $0) }
+            }
+        }
+        result += [.newProject, .heading("Recent Meetings")] + snapshot.meetings.prefix(8).map(ArchiveSidebarRow.meeting)
+        if !snapshot.deletedMeetings.isEmpty { result += [.heading("Recently Deleted")] + snapshot.deletedMeetings.map(ArchiveSidebarRow.deletedMeeting) }
+        return result
+    }
+    static func selectedKey(_ snapshot: ArchiveShellSnapshot, expanded: Set<String>) -> String {
+        if snapshot.view == "home" { return "library" }
+        if snapshot.view == "project" { return "project:" + (snapshot.selectedProjectId ?? "") }
+        let id = snapshot.selectedMeetingId ?? ""
+        if let projectId = snapshot.meetings.first(where: { $0.id == id })?.projectId, expanded.contains(projectId) {
+            return "project-note:" + projectId + ":" + id
+        }
+        return "meeting:" + id
     }
 }
 
@@ -137,6 +163,7 @@ private final class ArchiveContentViewController: NSViewController {
 }
 private final class ArchiveNavigationTableView: NSTableView {
     var contextMenuForRow: ((Int) -> NSMenu?)?
+    var disclosureForRow: ((Int, Bool) -> Bool)?
     override func menu(for event: NSEvent) -> NSMenu? {
         // A secondary click can target a different row from the open meeting.
         // Capture that row now; menu actions must never consult selectedRow.
@@ -145,11 +172,13 @@ private final class ArchiveNavigationTableView: NSTableView {
         return contextMenuForRow?(row)
     }
     override func keyDown(with event: NSEvent) {
+        if isEnabled, selectedRow >= 0, [123,124].contains(event.keyCode), disclosureForRow?(selectedRow,event.keyCode == 124) == true { return }
         if isEnabled, selectedRow >= 0, [36, 49, 76].contains(event.keyCode), let action {
             NSApp.sendAction(action, to: target, from: self)
         } else { super.keyDown(with: event) }
     }
 }
+private final class ArchiveProjectDisclosure: NSButton { var projectId = "" }
 
 @MainActor final class MeetingArchiveShell: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSToolbarDelegate {
     let split = NSSplitViewController()
@@ -171,6 +200,8 @@ private final class ArchiveNavigationTableView: NSTableView {
     private var updatingSelection = false
     private var confirmedSelectionKey = ""
     private var rows: [ArchiveSidebarRow] = []
+    private var expandedProjectIds: Set<String> = []
+    private var expansionPreferenceKey: String?
     private var visibleMeetings: [ArchiveMeetingRow] = []
     private let sidebar = ArchiveNavigationTableView()
     private let library = ArchiveNavigationTableView()
@@ -251,6 +282,14 @@ private final class ArchiveNavigationTableView: NSTableView {
     private func buildSidebar() {
         sidebar.style = .sourceList
         sidebar.contextMenuForRow = { [weak self] row in self?.meetingMenu(inSidebar: true, row: row) }
+        sidebar.disclosureForRow = { [weak self] row, expand in
+            guard let self, self.canAct, self.rows.indices.contains(row) else { return false }
+            if case .project(let project) = self.rows[row] { self.setProjectExpanded(project.id, expand); return true }
+            if !expand, case .projectNote(let id, _) = self.rows[row], let parent = self.rows.firstIndex(where: { $0.key == "project:" + id }) {
+                self.sidebar.selectRowIndexes(IndexSet(integer: parent), byExtendingSelection: false); return true
+            }
+            return false
+        }
         sidebar.target = self; sidebar.action = #selector(sidebarClicked)
         let scroll = configureTable(sidebar, name: "Projects and recent meetings")
         let footer = NSStackView(views: [connectionLabel, storageLabel]); footer.orientation = .vertical
@@ -378,12 +417,7 @@ private final class ArchiveNavigationTableView: NSTableView {
     }
     func apply(_ snapshot: ArchiveShellSnapshot) {
         self.snapshot = snapshot; snapshotReceived = true
-        var newRows: [ArchiveSidebarRow] = [.library, .heading("Projects")]
-            + snapshot.projects.map(ArchiveSidebarRow.project) + [.newProject, .heading("Recent Meetings")]
-            + snapshot.meetings.prefix(8).map(ArchiveSidebarRow.meeting)
-        if !snapshot.deletedMeetings.isEmpty {
-            newRows += [.heading("Recently Deleted")] + snapshot.deletedMeetings.map(ArchiveSidebarRow.deletedMeeting)
-        }
+        let newRows = ArchiveSidebarRow.build(snapshot, expanded: expandedProjectIds)
         let highlightedKey = rows.indices.contains(sidebar.selectedRow) ? rows[sidebar.selectedRow].key : nil
         if rows != newRows {
             rows = newRows; sidebar.reloadData()
@@ -392,8 +426,7 @@ private final class ArchiveNavigationTableView: NSTableView {
             }
         }
         updatingSelection = true
-        let selectedKey = snapshot.view == "home" ? "library" : snapshot.view == "project"
-            ? "project:" + (snapshot.selectedProjectId ?? "") : "meeting:" + (snapshot.selectedMeetingId ?? "")
+        let selectedKey = ArchiveSidebarRow.selectedKey(snapshot, expanded: expandedProjectIds)
         if selectedKey != confirmedSelectionKey {
             confirmedSelectionKey = selectedKey
             if let index = rows.firstIndex(where: { $0.key == selectedKey }) {
@@ -411,7 +444,20 @@ private final class ArchiveNavigationTableView: NSTableView {
     }
     private var canAct: Bool { interactionEnabled && !quitLocked && !meetingSheetOpen && snapshot?.connected == true && snapshot?.busy != true }
     func setInteractionEnabled(_ enabled: Bool) { interactionEnabled = enabled; refreshControls() }
-    func setDataDirectory(_ directory: URL) { dataDirectory = directory }
+    func setDataDirectory(_ directory: URL) {
+        dataDirectory = directory
+        expansionPreferenceKey = "MinuteShelf.ExpandedProjects." + directory.standardizedFileURL.path
+        expandedProjectIds = Set(UserDefaults.standard.stringArray(forKey: expansionPreferenceKey!) ?? [])
+        if let snapshot { apply(snapshot) }
+    }
+    private func setProjectExpanded(_ id: String, _ expanded: Bool) {
+        guard canAct, let snapshot, snapshot.projects.contains(where: { $0.id == id }) else { return }
+        if expanded { expandedProjectIds.insert(id) } else { expandedProjectIds.remove(id) }
+        if let key = expansionPreferenceKey { UserDefaults.standard.set(expandedProjectIds.sorted(), forKey: key) }
+        // Expansion changes a cell's chevron even for an empty project.
+        confirmedSelectionKey = ""; apply(snapshot); sidebar.reloadData(); restoreConfirmedSelection()
+    }
+    @objc private func toggleProject(_ sender: ArchiveProjectDisclosure) { setProjectExpanded(sender.projectId, !expandedProjectIds.contains(sender.projectId)) }
     func beginQuitLock() {
         if !quitLocked { searchFocusedBeforeQuit = searchIsFocused; searchSelectionBeforeQuit = searchSelection }
         quitLocked = true; refreshControls()
@@ -443,6 +489,12 @@ private final class ArchiveNavigationTableView: NSTableView {
     private func refreshControls() {
         searchField.isEnabled = interactionEnabled && !quitLocked
         sidebar.isEnabled = canAct; library.isEnabled = canAct
+        for index in rows.indices {
+            guard case .project = rows[index], let cell = sidebar.view(atColumn: 0, row: index, makeIfNecessary: false) else { continue }
+            for stack in cell.subviews.compactMap({ $0 as? NSStackView }) {
+                for button in stack.arrangedSubviews.compactMap({ $0 as? ArchiveProjectDisclosure }) { button.isEnabled = canAct }
+            }
+        }
         newButton.isEnabled = canAct && snapshot?.activeRecording == nil; emptyNewButton.isEnabled = newButton.isEnabled
         settingsButton.isEnabled = interactionEnabled && !quitLocked
         sidebarButton.isEnabled = !quitLocked
@@ -525,8 +577,23 @@ private final class ArchiveNavigationTableView: NSTableView {
             } else {
                 let icon = NSImageView(image: NSImage(systemSymbolName: row.symbol, accessibilityDescription: nil) ?? NSImage())
                 icon.contentTintColor = .secondaryLabelColor
-                let stack = NSStackView(views: [icon, label]); stack.spacing = 9; stack.orientation = .horizontal
-                cell.addSubview(stack); pin(stack, to: cell, inset: 6)
+                var elements: [NSView] = [icon, label]
+                if case .project(let project) = row {
+                    let expanded = expandedProjectIds.contains(project.id)
+                    let disclosure = ArchiveProjectDisclosure(title: "", target: self, action: #selector(toggleProject(_:)))
+                    disclosure.projectId = project.id; disclosure.isBordered = false; disclosure.imagePosition = .imageOnly
+                    disclosure.image = NSImage(systemSymbolName: expanded ? "chevron.down" : "chevron.right", accessibilityDescription: nil)
+                    disclosure.contentTintColor = .secondaryLabelColor; disclosure.isEnabled = canAct
+                    disclosure.setAccessibilityLabel((expanded ? "Collapse " : "Expand ") + project.name)
+                    disclosure.toolTip = (expanded ? "Hide" : "Show") + " project notes"
+                    disclosure.widthAnchor.constraint(equalToConstant: 14).isActive = true
+                    elements.insert(disclosure, at: 0)
+                }
+                let stack = NSStackView(views: elements); stack.spacing = 7; stack.orientation = .horizontal
+                cell.addSubview(stack); stack.translatesAutoresizingMaskIntoConstraints = false
+                let inset: CGFloat = { if case .projectNote = row { return 34 }; return 6 }()
+                NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: inset),
+                    stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6), stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor)])
                 icon.widthAnchor.constraint(equalToConstant: 17).isActive = true
             }
             // Tooltips are resolved from the current row by the delegate.
@@ -565,7 +632,7 @@ private final class ArchiveNavigationTableView: NSTableView {
                 restore.target = self; restore.representedObject = meeting.id; menu.addItem(restore)
                 return menu
             }
-            guard case .meeting(let meeting) = rows[row] else { return nil }
+            guard let meeting = rows[row].meeting else { return nil }
             return meetingMenu(meeting)
         }
         guard visibleMeetings.indices.contains(row) else { return nil }
@@ -653,8 +720,8 @@ private final class ArchiveNavigationTableView: NSTableView {
         guard canAct, sidebar.selectedRow >= 0 else { return }
         switch rows[sidebar.selectedRow] {
         case .library: onAction?("library", [:])
-        case .project(let project): onAction?("project", ["id": project.id])
-        case .meeting(let meeting): onAction?("meeting", ["id": meeting.id])
+        case .project(let project): setProjectExpanded(project.id, true); onAction?("project", ["id": project.id])
+        case .meeting(let meeting), .projectNote(_, let meeting): onAction?("meeting", ["id": meeting.id])
         case .deletedMeeting(let meeting): restoreMeeting(id: meeting.id)
         case .newProject: onAction?("new-project", [:])
         case .heading: break
@@ -667,7 +734,7 @@ private final class ArchiveNavigationTableView: NSTableView {
     func restoreConfirmedSelection() {
         guard let snapshot else { return }
         updatingSelection = true
-        let key = snapshot.view == "home" ? "library" : snapshot.view == "project" ? "project:" + (snapshot.selectedProjectId ?? "") : "meeting:" + (snapshot.selectedMeetingId ?? "")
+        let key = ArchiveSidebarRow.selectedKey(snapshot, expanded: expandedProjectIds)
         if let row = rows.firstIndex(where: { $0.key == key }) { sidebar.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false) }
         else { sidebar.deselectAll(nil) }
         updatingSelection = false

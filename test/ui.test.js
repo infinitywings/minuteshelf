@@ -60,7 +60,7 @@ function meeting(id, notes = `Notes ${id}`, title = id) {
     selection:{ window:{ app:'Test', title:'Test' }, systemAudio:false }, preset:{ fps:15 }, capture:{}, timeline:{ originPTS:{ seconds:0 } },
     segments:[], recovered:[], gaps:[], interruptedTail:[], bookmarks:[] } };
 }
-function harness(handler = () => { throw new Error('Unexpected request'); }, { native = false, trash = () => [] } = {}) {
+function harness(handler = () => { throw new Error('Unexpected request'); }, { native = false, trash = () => [], playback = () => ({ status:'ready',path:'exports/prepared/recording.m4a' }) } = {}) {
   const elements = new Map(), timers = new Map(), listeners = new Map(); let timerId = 0, clock = 0;
   const document = {};
   document.body = new Element('body', document); document.activeElement = document.body;
@@ -79,6 +79,7 @@ function harness(handler = () => { throw new Error('Unexpected request'); }, { n
       if (url === '/api/trash') data = trash();
       else if (url.endsWith('/rka-context')) data = { connection:{ enabled:false, projectId:null, query:'', angleQueries:[], selectedIds:[] }, snapshot:null };
       else if (url.endsWith('/artifacts')) data = { folder:'/test', documents:[], entries:[], exports:[], generatedContentAvailable:false };
+      else if (url.endsWith('/playback')) data = await playback(url, options);
       else data = await handler(url, options);
       return { ok:true, json:async () => data };
     }
@@ -87,9 +88,58 @@ function harness(handler = () => { throw new Error('Unexpected request'); }, { n
   // Run the actual controller and event handlers, excluding its network bootstrap.
   vm.runInContext(source.slice(0, source.lastIndexOf('(async () =>')), context);
   const run = code => vm.runInContext(code, context);
-  return { get, run, timers, document, window, nativeMessages, advance(ms) { clock += ms; }, dispatch(name, event) { for (const handler of listeners.get(name) || []) handler(event); }, load(value) { context.fixture = value; run('selected = fixture.manifest.id; renderMeeting(fixture, true); setMeetingLoading(false);'); } };
+  return { get, run, timers, document, window, nativeMessages, advance(ms) { clock += ms; const audio = get('meeting-audio'); if (!audio.paused && !audio.stalled) audio.currentTime += ms/1000; }, dispatch(name, event) { for (const handler of listeners.get(name) || []) handler(event); }, load(value) { context.fixture = value; run('selected = fixture.manifest.id; renderMeeting(fixture, true); setMeetingLoading(false);'); } };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('playback has one combined audio element and no segment or source controls', () => {
+  const html = fs.readFileSync(path.join(__dirname,'../web/recorder.html'),'utf8');
+  assert.match(html, /id="meeting-audio"/);
+  for (const id of ['segments','listen-system','listen-mic','standalone-audio','audio-source','audio-clip','merged-video','export-system','export-mic']) assert(!html.includes(`id="${id}"`), id);
+  assert.match(html, /<video id="video"[^>]* muted/);
+});
+
+test('first playback preparation is deduplicated, visibly pending, and never autoplays on completion', async () => {
+  const calls = []; let state = 'missing';
+  const ui = harness(undefined,{playback:(url,options) => {
+    calls.push(options.method || 'GET');
+    if (options.method === 'POST') state = 'preparing';
+    return {status:state,progress:.4,path:'exports/cache/recording.m4a'};
+  }});
+  sessionPlaybackMeeting(ui);
+  await Promise.all([ui.run('ensureMeetingPlayback(true)'),ui.run('ensureMeetingPlayback(true)')]);
+  assert.deepEqual(calls,['GET','POST']); assert.equal(ui.get('play-session').disabled,true);
+  assert.match(ui.get('playback-state').textContent,/Preparing continuous meeting audio/);
+  state = 'ready'; await ui.run('ensureMeetingPlayback(false)');
+  assert.equal(ui.get('play-session').disabled,false); assert.equal(ui.get('meeting-audio').playCount,0);
+});
+
+test('audio owns the clock during buffering and is never repeatedly sought by playback polling', async () => {
+  const ui = harness(); sessionPlaybackMeeting(ui); await ui.run('seek(2,true)');
+  const audio = ui.get('meeting-audio'); let at = 2, seeks = 0;
+  Object.defineProperty(audio,'currentTime',{get:()=>at,set:value=>{seeks++;at=value;},configurable:true});
+  audio.stalled = true;
+  for (let i=0;i<20;i++) { ui.advance(150); await ui.run('updateSessionPlayback()'); }
+  assert.equal(seeks,0); assert.equal(Number(ui.get('timeline').value),2);
+  audio.stalled = false; ui.advance(500); const before=seeks; await ui.run('updateSessionPlayback()');
+  assert.equal(seeks,before); assert.equal(Number(ui.get('timeline').value),2.5);
+});
+
+test('video decoding failure does not stop the continuous audio track', async () => {
+  const ui = harness(); sessionPlaybackMeeting(ui); await ui.run('seek(1,true)');
+  const audio=ui.get('meeting-audio'), url=audio.src, plays=audio.playCount;
+  ui.get('video').onerror(); ui.advance(500); await ui.run('updateSessionPlayback()');
+  assert.equal(audio.paused,false); assert.equal(audio.src,url); assert.equal(audio.playCount,plays);
+  assert.equal(Number(ui.get('timeline').value),1.5); assert.equal(ui.get('video').hidden,true);
+});
+
+test('late audio metadata cannot restart or report a stale error after changing meetings', async () => {
+  const ui=harness();sessionPlaybackMeeting(ui);ui.get('meeting-audio').load=()=>{};
+  const playing=ui.run('seek(3,true)');await tick();const metadata=ui.get('meeting-audio').onloadedmetadata;
+  ui.load(meeting('other'));metadata();await playing;
+  assert.equal(ui.get('meeting-audio').playCount,0);assert.equal(ui.run('selected'),'other');
+  assert.equal(ui.get('message').textContent,'');
+});
 
 test('pending meeting navigation flushes old notes to their owner and disables the editor', async () => {
   const saved = deferred(), loaded = deferred(), writes = [];
@@ -168,23 +218,6 @@ test('an unavailable archive is explained without replacing or saving the curren
   assert.match(ui.get('message').textContent, /Invalid manifest/); assert.equal(ui.run('notesDirty'), true);
 });
 
-function prepareAudio(ui) {
-  ui.run(`selected='A'; sourceClip={startPTS:{seconds:0},endPTS:{seconds:10},file:'video.mp4'}; switching=false;
-    current={manifest:{durationSeconds:10,timeline:{originPTS:{seconds:0}},segments:[{kind:'system',file:'system.wav',startPTS:{seconds:0},endPTS:{seconds:10},sampleRate:48000}],recovered:[]}};
-    rawPlaying=true; rawPosition=1; rawStartedPosition=1; rawStartedAt=playbackNow();
-    $('video').paused=false; $('video').currentTime=1; $('listen-system').checked=true;`);
-}
-const audioRecords = [{ pts:{ seconds:0 }, frames:480000, frameOffset:0 }];
-test('failed audio index requests stop playback, show an error and retry on playback', async () => {
-  let calls = 0;
-  const ui = harness(() => { if (++calls === 1) throw new Error('Temporary network failure'); return audioRecords; });
-  prepareAudio(ui); await ui.run('syncAudio()');
-  assert.equal(ui.run('audioIndexes.size'), 0); assert.equal(ui.get('video').paused, true);
-  assert.match(ui.get('message').textContent, /Press Play to retry/);
-  await ui.get('play-session').click();
-  assert.equal(calls, 2); assert.equal(ui.get('message').hidden, true); assert.equal(ui.get('audio-system').paused, false); assert.equal(ui.get('audio-system').currentTime, 1);
-});
-
 function sourceEvidenceMeeting(ui, { video = false, microphone = true, system = true } = {}) {
   const value = meeting('A'); value.manifest.durationSeconds = 30; value.manifest.timeline.originPTS.seconds = 100;
   value.manifest.segments = [
@@ -192,46 +225,46 @@ function sourceEvidenceMeeting(ui, { video = false, microphone = true, system = 
     ...(system ? [{ kind:'system', file:'system-000001.wav', startPTS:{ seconds:100 }, endPTS:{ seconds:130 }, sampleRate:1000 }] : []),
     ...(video ? [{ kind:'video', file:'video-000001.mp4', startPTS:{ seconds:100 }, endPTS:{ seconds:130 } }] : [])
   ];
-  ui.load(value); ui.get('listen-system').checked = true; ui.get('listen-mic').checked = false;
+  ui.load(value);
 }
 
-test('microphone evidence selects its source before video playback and never autoplays', async () => {
+test('microphone evidence validates its source then positions combined playback without autoplay', async () => {
   const calls = [], ui = harness(url => { calls.push(url); return [{ pts:{ seconds:100 }, frames:30000, frameOffset:0 }]; });
   sourceEvidenceMeeting(ui, { video:true });
   await ui.run("jumpToSource({source:'microphone',startMs:7000})");
   assert.deepEqual(calls, ['/api/meetings/A/index/microphone-000001.wav']);
-  assert.equal(ui.get('listen-mic').checked, true); assert.equal(ui.get('listen-system').checked, false);
+  assert.match(ui.get('meeting-audio').src, /recording.m4a/);
   assert.equal(ui.get('video').currentTime, 5); assert.equal(ui.get('video').paused, true);
-  assert.equal(ui.get('audio-system').playCount, 0);
+  assert.equal(ui.get('meeting-audio').playCount, 0);
 });
 
-test('audio-only evidence maps PTS through a mid-file gap instead of subtracting file start', async () => {
+test('evidence validates original PTS but seeks the gap-preserving combined track', async () => {
   const ui = harness(() => [{ pts:{ seconds:100 }, frames:5000, frameOffset:0 }, { pts:{ seconds:110 }, frames:10000, frameOffset:5000 }]);
   sourceEvidenceMeeting(ui); await ui.run("jumpToSource({source:'microphone',startMs:12000})");
-  assert.equal(ui.get('audio-source').value, 'microphone'); assert.equal(ui.get('audio-clip').value, 'microphone-000001.wav');
-  assert.equal(ui.get('standalone-audio').src, '/api/meetings/A/media/microphone-000001.wav');
-  assert.equal(ui.get('standalone-audio').currentTime, 5); // PTS 110 maps to byte frame 5000, not elapsed time 10.
-  assert.equal(ui.get('standalone-audio').hidden, false); assert.equal(ui.get('standalone-audio').paused, true);
-  assert.equal(Number(ui.get('timeline').value), 10); assert.match(ui.get('message').textContent, /Press Play/);
+  assert.match(ui.get('meeting-audio').src, /recording.m4a/);
+
+  assert.equal(ui.get('meeting-audio').currentTime, 10); // The prepared track retains the 5-second PTS gap.
+  assert.equal(ui.get('meeting-audio').paused, true);
+  assert.equal(Number(ui.get('timeline').value), 10);
 });
 
 test('evidence lead-in stops at an audio gap and refuses a missing source', async () => {
   const ui = harness(() => [{ pts:{ seconds:100 }, frames:5000, frameOffset:0 }, { pts:{ seconds:110 }, frames:10000, frameOffset:5000 }]);
   sourceEvidenceMeeting(ui); await ui.run("jumpToSource({source:'system',startMs:11000})");
-  assert.equal(ui.get('standalone-audio').currentTime, 5); assert.equal(Number(ui.get('timeline').value), 10);
+  assert.equal(ui.get('meeting-audio').currentTime, 10); assert.equal(Number(ui.get('timeline').value), 10);
   await assert.rejects(ui.run("jumpToSource({source:'system',startMs:7000})"), /audio gap/);
   sourceEvidenceMeeting(ui, { microphone:false });
   await assert.rejects(ui.run("jumpToSource({source:'microphone',startMs:11000})"), /Other sources were not substituted/);
-  assert.equal(ui.get('audio-system').playCount, 0);
+  assert.equal(ui.get('meeting-audio').playCount, 0);
 });
 
-test('audio evidence at a video gap opens original standalone audio', async () => {
+test('audio evidence uses the same combined track across a video gap', async () => {
   const ui = harness(() => [{ pts:{ seconds:100 }, frames:30000, frameOffset:0 }]);
   sourceEvidenceMeeting(ui, { video:true }); ui.run('current.manifest.segments.find(c=>c.kind===\'video\').endPTS.seconds=105;');
   await ui.run("jumpToSource({source:'system',startMs:12000})");
-  assert.equal(ui.get('standalone-audio').currentTime, 10); assert.equal(ui.get('standalone-audio').hidden, false);
-  assert.equal(ui.get('video').paused, true); assert.equal(ui.get('listen-system').checked, true); assert.equal(ui.get('listen-mic').checked, false);
-  await ui.run('syncAudio()');
+  assert.equal(ui.get('meeting-audio').currentTime, 10); assert.equal(ui.get('meeting-audio').hidden, false);
+  assert.equal(ui.get('video').paused, true);
+  await ui.run('updateSessionPlayback()');
   assert.equal(Number(ui.get('timeline').value), 10, 'A paused old video must not overwrite the standalone evidence time');
 });
 
@@ -240,11 +273,11 @@ test('late audio evidence index cannot overwrite a newer jump or different meeti
   sourceEvidenceMeeting(ui); const old = ui.run("jumpToSource({source:'microphone',startMs:7000})");
   await ui.run("jumpToSource({source:'system',startMs:12000})");
   pending.resolve([{ pts:{ seconds:100 }, frames:30000, frameOffset:0 }]); await old;
-  assert.equal(ui.get('standalone-audio').dataset.clip, 'system-000001.wav'); assert.equal(ui.get('standalone-audio').currentTime, 10);
+  assert.match(ui.get('meeting-audio').dataset.clip, /recording.m4a/); assert.equal(ui.get('meeting-audio').currentTime, 10);
   const late = deferred(), other = harness(() => late.promise); sourceEvidenceMeeting(other);
   const jumping = other.run("jumpToSource({source:'microphone',startMs:7000})");
   other.load(meeting('B')); late.resolve([{ pts:{ seconds:100 }, frames:30000, frameOffset:0 }]); await jumping;
-  assert.equal(other.get('standalone-audio').src, undefined);
+  assert.equal(other.get('meeting-audio').src, undefined);
 });
 
 test('failed evidence index can be retried and late failures do not disturb another meeting', async () => {
@@ -252,29 +285,11 @@ test('failed evidence index can be retried and late failures do not disturb anot
   const ui = harness(() => { if (++attempts === 1) throw new Error('Index unavailable'); return [{ pts:{ seconds:100 }, frames:30000, frameOffset:0 }]; });
   sourceEvidenceMeeting(ui);
   await assert.rejects(ui.run("jumpToSource({source:'microphone',startMs:7000})"), /Index unavailable/);
-  await ui.run("jumpToSource({source:'microphone',startMs:7000})"); assert.equal(attempts, 2); assert.equal(ui.get('standalone-audio').currentTime, 5);
+  await ui.run("jumpToSource({source:'microphone',startMs:7000})"); assert.equal(attempts, 2); assert.equal(ui.get('meeting-audio').currentTime, 5);
   const late = deferred(), other = harness(() => late.promise); sourceEvidenceMeeting(other);
   const jumping = other.run("jumpToSource({source:'microphone',startMs:7000})"); other.load(meeting('B'));
   late.reject(new Error('Stale A failure')); await jumping;
   assert.equal(other.get('message').textContent.includes('Stale A'), false);
-});
-
-test('raw video, merged video and standalone audio are mutually exclusive playback groups', async () => {
-  for (const active of ['video', 'merged-video', 'standalone-audio']) {
-    const ui = harness();
-    for (const id of ['video', 'merged-video', 'standalone-audio', 'audio-system', 'audio-microphone']) ui.get(id).paused = false;
-    if (active === 'video') ui.run('rawPlaying=true;'); // The session transport, not the picture element, authorizes playback.
-    await ui.get(active).play();
-    for (const id of ['video', 'merged-video', 'standalone-audio']) assert.equal(ui.get(id).paused, id !== active, `${active} starts: ${id}`);
-    for (const id of ['audio-system', 'audio-microphone']) assert.equal(ui.get(id).paused, active !== 'video', `${active} starts: ${id}`);
-  }
-});
-
-test('an in-flight audio index cannot restart raw audio after switching playback groups', async () => {
-  const loaded = deferred(), ui = harness(() => loaded.promise);
-  prepareAudio(ui); const syncing = ui.run('syncAudio()');
-  await ui.get('merged-video').play(); loaded.resolve(audioRecords); await syncing;
-  assert.equal(ui.get('audio-system').playCount, 0); assert.equal(ui.get('video').paused, true); assert.equal(ui.get('merged-video').paused, false);
 });
 
 test('selecting sources proactively requests screen permission without microphone access', async () => {
@@ -401,8 +416,8 @@ test('bookmark and segment polling retain focus and use stable controls when fil
   ui.load(data); const mark = ui.get('bookmarks').children[0]; mark.focus(); ui.load(data); assert.equal(ui.document.activeElement, mark);
   data.manifest.bookmarks[0].text = 'Updated'; ui.load(data); assert.equal(ui.document.activeElement.dataset.focusKey, 'mark1');
   data.manifest.bookmarks = []; ui.load(data); assert.equal(ui.document.activeElement, ui.get('bookmark-text'));
-  const segment = ui.get('segments').children[0]; segment.focus(); ui.load(data); assert.equal(ui.document.activeElement, segment);
-  data.manifest.segments = []; ui.load(data); assert.equal(ui.document.activeElement, ui.get('timeline'));
+  const timeline = ui.get('timeline'); timeline.focus(); ui.load(data); assert.equal(ui.document.activeElement, timeline);
+  assert.equal(ui.get('segments').children.length, 0);
 });
 
 test('export progress does not recreate links and removed exports return focus to export control', () => {
@@ -947,7 +962,7 @@ function sessionPlaybackMeeting(ui, { videoRanges = [[0, 2], [2, 4], [10, 12]], 
     { kind:'system', file:'system.wav', sampleRate:1000, startPTS:{ seconds:100 }, endPTS:{ seconds:100 + duration } },
     ...videoRanges.map(([start, end], index) => ({ kind:'video', file:`video-${index}.mp4`, startPTS:{ seconds:100 + start }, endPTS:{ seconds:100 + end } }))
   ];
-  ui.get('video').duration = 2; ui.load(value); ui.get('listen-system').checked = true; return value;
+  ui.get('video').duration = 2; ui.load(value); return value;
 }
 const fullSessionAudio = [{ pts:{ seconds:100 }, frames:50856, frameOffset:0 }];
 
@@ -958,7 +973,7 @@ test('meeting playback shows full duration and traverses video fragments without
   await ui.get('play-session').click(); ui.advance(2500); await ui.run('updateSessionPlayback()');
   assert.equal(ui.get('video').src, '/api/meetings/session/media/video-1.mp4');
   assert.equal(ui.get('video').currentTime, .5); assert.equal(Number(ui.get('timeline').value), 2.5);
-  assert.equal(ui.get('audio-system').currentTime, 2.5); assert.equal(ui.get('play-session').textContent, 'Pause');
+  assert.equal(ui.get('meeting-audio').currentTime, 2.5); assert.equal(ui.get('play-session').textContent, 'Pause');
 });
 
 test('middle and trailing video gaps preserve session time and audio instead of skipping or freezing a picture', async () => {
@@ -966,35 +981,35 @@ test('middle and trailing video gaps preserve session time and audio instead of 
   await ui.get('play-session').click(); ui.advance(6000); await ui.run('updateSessionPlayback()');
   assert.equal(ui.get('video').hidden, true); assert.equal(ui.get('video-gap').hidden, false);
   assert.match(ui.get('video-gap').textContent, /next saved picture starts at 00:10/);
-  assert.equal(Number(ui.get('timeline').value), 6); assert.equal(ui.get('audio-system').currentTime, 6); assert.equal(ui.get('audio-system').paused, false);
+  assert.equal(Number(ui.get('timeline').value), 6); assert.equal(ui.get('meeting-audio').currentTime, 6); assert.equal(ui.get('meeting-audio').paused, false);
   ui.advance(4500); await ui.run('updateSessionPlayback()');
   assert.equal(ui.get('video').hidden, false); assert.equal(ui.get('video').currentTime, .5); assert.equal(Number(ui.get('timeline').value), 10.5);
   ui.advance(34500); await ui.run('updateSessionPlayback()');
-  assert.equal(ui.get('video').hidden, true); assert.equal(ui.get('audio-system').currentTime, 45); assert.equal(Number(ui.get('timeline').value), 45);
+  assert.equal(ui.get('video').hidden, true); assert.equal(ui.get('meeting-audio').currentTime, 45); assert.equal(Number(ui.get('timeline').value), 45);
   ui.advance(10000); await ui.run('updateSessionPlayback()');
-  assert.equal(Number(ui.get('timeline').value), 50.856); assert.equal(ui.get('audio-system').paused, true); assert.equal(ui.get('play-session').textContent, 'Replay');
+  assert.equal(Number(ui.get('timeline').value), 50.856); assert.equal(ui.get('meeting-audio').paused, true); assert.equal(ui.get('play-session').textContent, 'Replay');
 });
 
 test('audio-only session supports play, pause, resume and seeking inside video gaps', async () => {
   const ui = harness(() => fullSessionAudio); sessionPlaybackMeeting(ui, { videoRanges:[] });
   await ui.get('play-session').click(); ui.advance(5000); await ui.run('updateSessionPlayback()');
   await ui.get('play-session').click(); ui.advance(10000); await ui.run('updateSessionPlayback()');
-  assert.equal(Number(ui.get('timeline').value), 5); assert.equal(ui.get('audio-system').paused, true);
-  ui.get('timeline').value = 20; await ui.get('timeline').onchange(); assert.equal(Number(ui.get('timeline').value), 20); assert.equal(ui.get('audio-system').paused, true);
+  assert.equal(Number(ui.get('timeline').value), 5); assert.equal(ui.get('meeting-audio').paused, true);
+  ui.get('timeline').value = 20; await ui.get('timeline').onchange(); assert.equal(Number(ui.get('timeline').value), 20); assert.equal(ui.get('meeting-audio').paused, true);
   await ui.get('play-session').click(); ui.advance(1000); await ui.run('updateSessionPlayback()');
-  assert.equal(Number(ui.get('timeline').value), 21); assert.equal(ui.get('audio-system').currentTime, 21); assert.equal(ui.get('video').hidden, true);
+  assert.equal(Number(ui.get('timeline').value), 21); assert.equal(ui.get('meeting-audio').currentTime, 21); assert.equal(ui.get('video').hidden, true);
   ui.run("selectMeetingTab('notes')"); ui.advance(5000); await ui.run('updateSessionPlayback()');
-  assert.equal(Number(ui.get('timeline').value), 21); assert.equal(ui.get('audio-system').paused, true);
+  assert.equal(Number(ui.get('timeline').value), 21); assert.equal(ui.get('meeting-audio').paused, true);
 });
 
-test('late audio index cannot rewind a newer seek or resume after pause', async () => {
-  const pending = deferred(), ui = harness(() => pending.promise); sessionPlaybackMeeting(ui, { videoRanges:[] });
+test('late playback preparation cannot rewind a newer seek or resume after pause', async () => {
+  const pending = deferred(), ui = harness(undefined, { playback:() => pending.promise }); sessionPlaybackMeeting(ui, { videoRanges:[] });
   const starting = ui.get('play-session').click(); ui.advance(1000);
-  const seeking = ui.run('seek(20, true)'); pending.resolve(fullSessionAudio); await Promise.all([starting, seeking]);
-  assert.equal(ui.get('audio-system').currentTime, 20); assert.equal(Number(ui.get('timeline').value), 20);
-  const late = deferred(), other = harness(() => late.promise); sessionPlaybackMeeting(other, { videoRanges:[] });
-  const waiting = other.get('play-session').click(); other.run('pauseRawPlayback()'); late.resolve(fullSessionAudio); await waiting;
-  assert.equal(other.get('audio-system').playCount, 0); assert.equal(other.get('play-session').textContent, 'Play');
+  const seeking = ui.run('seek(20, true)'); pending.resolve({status:'ready',path:'exports/prepared/recording.m4a'}); await Promise.all([starting, seeking]);
+  assert.equal(ui.get('meeting-audio').currentTime, 20); assert.equal(Number(ui.get('timeline').value), 20);
+  const late = deferred(), other = harness(undefined, {playback:() => late.promise}); sessionPlaybackMeeting(other, { videoRanges:[] });
+  const waiting = other.get('play-session').click(); other.run('pauseRawPlayback()'); late.resolve({status:'ready',path:'exports/prepared/recording.m4a'}); await waiting;
+  assert.equal(other.get('meeting-audio').playCount, 0); assert.equal(other.get('play-session').textContent, 'Play');
 });
 
 test('late video metadata cannot autoplay after pause or replace a different meeting', async () => {
@@ -1011,9 +1026,9 @@ test('paused seek and delayed audio metadata use the latest session position', a
   sessionPlaybackMeeting(ui); const metadata = ui.get('video').onloadedmetadata;
   await ui.run('seek(1.2, false)'); metadata();
   assert.ok(Math.abs(ui.get('video').currentTime - 1.2) < .00001); assert.equal(ui.get('video').paused, true);
-  ui.get('audio-system').load = () => {}; await ui.get('play-session').click();
-  const audioMetadata = ui.get('audio-system').onloadedmetadata; ui.advance(4000); audioMetadata();
-  assert.ok(Math.abs(ui.get('audio-system').currentTime - 5.2) < .00001);
+  ui.run('resetMeetingAudio()'); ui.get('meeting-audio').load = () => {}; const starting = ui.get('play-session').click(); await tick();
+  const audioMetadata = ui.get('meeting-audio').onloadedmetadata; ui.advance(4000); audioMetadata(); await starting;
+  assert.ok(Math.abs(ui.get('meeting-audio').currentTime - 1.2) < .00001);
 });
 
 test('range drag survives playback polling and manifest refresh before committing once', async () => {
@@ -1036,7 +1051,7 @@ test('canceling a playing range drag preserves the advancing session and ignores
   await ui.get('play-session').click(); ui.advance(5000); await ui.run('updateSessionPlayback()');
   const range = ui.get('timeline'); range.onpointerdown(); range.value = 30; range.oninput();
   ui.advance(2000); await ui.run('updateSessionPlayback()');
-  assert.equal(Number(range.value), 30); assert.equal(ui.get('audio-system').currentTime, 7);
+  assert.equal(Number(range.value), 30); assert.equal(ui.get('meeting-audio').currentTime, 7);
   range.onpointercancel(); await range.onchange();
   assert.equal(Number(range.value), 7); assert.equal(ui.run('rawPlaying'), true);
   ui.advance(1000); await ui.run('updateSessionPlayback()'); assert.equal(Number(range.value), 8);
@@ -1069,16 +1084,16 @@ test('a delayed raw-video play event cannot resurrect a paused session or its so
   const ui = harness(() => fullSessionAudio); sessionPlaybackMeeting(ui);
   await ui.get('play-session').click(); ui.advance(2500); await ui.run('updateSessionPlayback()');
   await ui.get('play-session').click();
-  const pausedAt = Number(ui.get('timeline').value), audioPlays = ui.get('audio-system').playCount;
+  const pausedAt = Number(ui.get('timeline').value), audioPlays = ui.get('meeting-audio').playCount;
   // WebKit can deliver the queued play event after the controller's pause.
   ui.get('video').paused = false; await ui.get('video').onplay();
   ui.advance(5000); await ui.run('updateSessionPlayback()');
   assert.equal(ui.run('rawPlaying'), false); assert.equal(ui.get('video').paused, true);
-  assert.equal(ui.get('audio-system').paused, true); assert.equal(ui.get('audio-system').playCount, audioPlays);
+  assert.equal(ui.get('meeting-audio').paused, true); assert.equal(ui.get('meeting-audio').playCount, audioPlays);
   assert.equal(Number(ui.get('timeline').value), pausedAt); assert.equal(ui.get('play-session').textContent, 'Play');
   // The audio timer must also obey session state before the media event arrives.
-  ui.get('video').paused = false; await ui.run('syncAudio()');
-  assert.equal(ui.get('audio-system').playCount, audioPlays); assert.equal(ui.run('rawPlaying'), false);
+  ui.get('video').paused = false; await ui.run('updateSessionPlayback()');
+  assert.equal(ui.get('meeting-audio').playCount, audioPlays); assert.equal(ui.run('rawPlaying'), false);
 });
 
 test('video load failure stops once and requires an explicit retry', async () => {
@@ -1093,26 +1108,26 @@ test('session Play resumes the audio-only evidence time shown on the meeting tim
   const ui = harness(() => [{ pts:{ seconds:100 }, frames:5000, frameOffset:0 }, { pts:{ seconds:110 }, frames:10000, frameOffset:5000 }]);
   sourceEvidenceMeeting(ui); await ui.run("jumpToSource({source:'microphone',startMs:12000})");
   await ui.get('play-session').click();
-  assert.equal(Number(ui.get('timeline').value), 10); assert.equal(ui.get('audio-microphone').currentTime, 5);
-  assert.equal(ui.get('audio-microphone').paused, false); assert.equal(ui.get('standalone-audio').paused, true);
+  assert.equal(Number(ui.get('timeline').value), 10); assert.equal(ui.get('meeting-audio').currentTime, 10);
+  assert.equal(ui.get('meeting-audio').paused, false);
 });
 
 test('rejected session audio play pauses with an actionable error and clears only after a successful retry', async () => {
   const ui = harness(() => fullSessionAudio); sessionPlaybackMeeting(ui, { videoRanges:[] });
-  const audio = ui.get('audio-system'), originalPlay = audio.play.bind(audio); let attempts = 0;
+  const audio = ui.get('meeting-audio'), originalPlay = audio.play.bind(audio); let attempts = 0;
   audio.play = () => ++attempts === 1 ? Promise.reject(new Error('User gesture required')) : originalPlay();
   await ui.get('play-session').click(); await tick();
   assert.equal(ui.run('rawPlaying'), false); assert.equal(ui.get('play-session').textContent, 'Play');
-  assert.match(ui.get('message').textContent, /System audio could not start: User gesture required.*Press Play to retry/);
+  assert.match(ui.get('message').textContent, /Meeting audio could not start: User gesture required.*Press Play to retry/);
   await ui.get('play-session').click(); await tick();
   assert.equal(ui.run('rawPlaying'), true); assert.equal(audio.paused, false); assert.equal(ui.get('message').hidden, true);
 });
 
 test('a stale rejected audio play cannot pause or show an error in a newer meeting', async () => {
   const pending = deferred(), ui = harness(() => fullSessionAudio); sessionPlaybackMeeting(ui, { videoRanges:[] });
-  ui.get('audio-system').play = () => pending.promise; await ui.get('play-session').click();
+  ui.get('meeting-audio').play = () => pending.promise; const starting = ui.get('play-session').click(); await tick();
   const newer = meeting('newer'); newer.manifest.durationSeconds = 30; ui.load(newer); await ui.get('play-session').click();
-  pending.reject(new Error('Old blocked audio')); await tick();
+  pending.reject(new Error('Old blocked audio')); await starting; await tick();
   assert.equal(ui.run('rawPlaying'), true); assert.equal(ui.get('message').textContent.includes('Old blocked audio'), false);
 });
 

@@ -19,7 +19,7 @@ import WebKit
         web = WKWebView(frame: NSRect(x: 0, y: 0, width: 1120, height: 900), configuration: config)
         web.navigationDelegate = self
         window = NSWindow(contentRect: web.frame, styleMask: [.titled, .closable], backing: .buffered, defer: false)
-        window.title = "Meeting Archive — isolated playback regression"
+        window.title = "MinuteShelf — isolated playback regression"
         if args.contains("--native-shell") {
             shell = MeetingArchiveShell(web:web, window:window)
             shell!.split.splitView.autosaveName = nil
@@ -42,6 +42,14 @@ import WebKit
                 }
                 if shell != nil { try await script("return window.MeetingArchiveDesktop.enableNativeShell()") }
                 try await script("await openMeeting(id); selectMeetingTab('playback'); return true", ["id": args[2]])
+                let preparedDeadline = Date().addingTimeInterval(180)
+                while try await script("return meetingPlayback?.status === 'video-only' || (meetingPlayback?.status === 'ready' && audioReady?.loaded)") as? Bool != true {
+                    guard Date() < preparedDeadline else { throw NSError(domain:"PlaybackTest",code:3,userInfo:[NSLocalizedDescriptionKey:"Continuous audio preparation timed out"]) }
+                    try await Task.sleep(nanoseconds:500_000_000)
+                    let failure = try await script("return ['failed','interrupted','blocked'].includes(meetingPlayback?.status) ? JSON.stringify(meetingPlayback) : ''") as? String ?? ""
+                    if !failure.isEmpty { throw NSError(domain:"PlaybackTest",code:4,userInfo:[NSLocalizedDescriptionKey:failure]) }
+                }
+                if args.contains("--continuous-audio") { try await continuousAudio(); finish(nil); return }
                 try await script("window.__playbackEvents=[]; const v=document.getElementById('video'); for(const name of ['loadstart','loadedmetadata','loadeddata','canplay','seeked','waiting','stalled','error','emptied']) v.addEventListener(name,()=>{window.__playbackEvents.push({name,time:v.currentTime,readyState:v.readyState,networkState:v.networkState}); if(window.__playbackEvents.length>80) window.__playbackEvents.shift();}); return true")
                 // Direct paused seeks before, inside, and after Testing3's gap;
                 // then the same path while the meeting transport is playing.
@@ -65,6 +73,40 @@ import WebKit
                 finish(nil)
             } catch { finish(error) }
         }
+    }
+    func continuousAudio() async throws {
+        // Observe decoded output before a zero-gain destination. This checks
+        // actual WebKit audio without playing private meeting content aloud.
+        let state = try await script("const a=document.getElementById('meeting-audio'); window.__ctx=new AudioContext(); window.__analyser=__ctx.createAnalyser();__analyser.fftSize=2048;const input=__ctx.createMediaElementSource(a), mute=__ctx.createGain();mute.gain.value=0;input.connect(__analyser);__analyser.connect(mute);mute.connect(__ctx.destination);window.__audioEvents=[];for(const name of ['loadstart','seeking','waiting','stalled','error']) a.addEventListener(name,()=>__audioEvents.push({name,time:a.currentTime}));await Promise.race([__ctx.resume(),new Promise(r=>setTimeout(r,1500))]);return __ctx.state;") as? String
+        guard state == "running" else { throw NSError(domain:"PlaybackTest",code:5,userInfo:[NSLocalizedDescriptionKey:"Web Audio did not start"]) }
+        for point in [1.0,1445.0,1475.0,1545.0,2436.0,4145.0] {
+            try await script("await seek(point,true);return true",["point":point])
+            try await Task.sleep(nanoseconds:650_000_000)
+            measurements.append(try await audioMeasurement("seek", expected:point))
+        }
+        try await script("await seek(2430,true);return true")
+        try await Task.sleep(nanoseconds:1_500_000_000)
+        try await script("window.__audioEvents=[]; return true")
+        for _ in 0..<120 {
+            try await Task.sleep(nanoseconds:250_000_000)
+            measurements.append(try await audioMeasurement("continuous", expected:0))
+        }
+        let rows=measurements.filter { $0["name"] as? String == "continuous" }
+        let times=rows.compactMap { $0["audioTime"] as? Double }
+        guard let first=times.first, let last=times.last, last-first>28 else { throw NSError(domain:"PlaybackTest",code:6,userInfo:[NSLocalizedDescriptionKey:"Audio clock did not advance continuously"]) }
+        let seeks=try await script("return __audioEvents.filter(e=>e.name==='seeking'||e.name==='loadstart'||e.name==='error')") as? [[String:Any]] ?? []
+        guard seeks.isEmpty else { throw NSError(domain:"PlaybackTest",code:7,userInfo:[NSLocalizedDescriptionKey:"Audio reloaded or sought during continuous playback"]) }
+        let files=Set(rows.compactMap { $0["videoFile"] as? String })
+        guard files.count>=3 else { throw NSError(domain:"PlaybackTest",code:8,userInfo:[NSLocalizedDescriptionKey:"Video boundaries were not exercised"]) }
+        let rms=rows.compactMap { $0["audioRMS"] as? Double }
+        guard rms.filter({$0>0.00001}).count>80 else { throw NSError(domain:"PlaybackTest",code:9,userInfo:[NSLocalizedDescriptionKey:"WebKit output was unexpectedly silent"]) }
+        guard Set(rms).count>80 else { throw NSError(domain:"PlaybackTest",code:10,userInfo:[NSLocalizedDescriptionKey:"WebKit analyser returned stale audio samples"]) }
+        try await script("pauseRawPlayback(); document.getElementById('video').scrollIntoView({block:'center'}); return true")
+        let image=NSBitmapImageRep(data:try await snapshot().tiffRepresentation!)!
+        try image.representation(using:.png,properties:[:])!.write(to:URL(fileURLWithPath:args[3]).appendingPathComponent("continuous-playback.png"))
+    }
+    func audioMeasurement(_ name:String, expected:Double) async throws -> [String:Any] {
+        try await script("const a=document.getElementById('meeting-audio'), v=document.getElementById('video'), samples=new Float32Array(__analyser.fftSize);__analyser.getFloatTimeDomainData(samples);return {name,expected,audioTime:a.currentTime,audioRMS:Math.sqrt(samples.reduce((s,x)=>s+x*x,0)/samples.length),paused:a.paused,seeking:a.seeking,audioURL:a.currentSrc,videoFile:sourceClip?.file||'',videoMuted:v.muted,position:Number(document.getElementById('timeline').value),audioEvents:__audioEvents.slice(-8)}",["name":name,"expected":expected]) as! [String:Any]
     }
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         if let value = message.body as? [String:Any], let state = ArchiveShellSnapshot(value) { shell?.apply(state) }

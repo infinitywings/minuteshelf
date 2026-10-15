@@ -153,6 +153,13 @@ function createRecorderServer(options = {}) {
           if (action === 'rename' && req.method === 'POST') return json(res, 200, lifecycle.rename(id, (await body(req)).title));
           if (action === 'trash' && req.method === 'POST') { await body(req); return json(res, 200, lifecycle.trash(id)); }
           if (!action && req.method === 'GET') return json(res, 200, { ...store.meeting(id), projectId: projects.assignment(id) });
+          if (action === 'playback' && req.method === 'GET') return json(res, 200, exports.playback(id));
+          if (action === 'playback' && req.method === 'POST') {
+            await body(req);
+            if (server.shuttingDown) return json(res, 503, { error: 'The app is quitting.' });
+            if (analysis.worker || analysis.install?.running) return json(res, 200, { status: 'blocked', error: 'Pause analysis before preparing playback.' });
+            return json(res, 200, exports.playback(id, { create: true }));
+          }
           if (action === 'analysis' && req.method === 'GET') return json(res, 200, file ? analysis.result(id, file) : analysis.state(id));
           if (action === 'analysis-preview' && req.method === 'POST') return json(res, 200, analysis.preview(id, await body(req)));
           if (action === 'analysis' && req.method === 'POST') { if (server.shuttingDown) return json(res, 503, { error: 'The app is quitting.' }); return json(res, 202, analysis.start(id, await body(req))); }
@@ -173,7 +180,7 @@ function createRecorderServer(options = {}) {
             return json(res, 201, await artifacts.importDocument(id, name, req, size));
           }
           if (action === 'open-folder' && req.method === 'POST') { const folder = artifacts.ensure(id); await openFolder(folder); return json(res, 200, { folder }); }
-          if (action === 'export-media' && req.method === 'POST') { if (analysis.worker || analysis.install?.running) return json(res, 409, { error: 'Pause analysis before exporting media.' }); return json(res, 202, exports.start(id, await body(req))); }
+          if (action === 'export-media' && req.method === 'POST') { if (analysis.worker || analysis.install?.running) return json(res, 409, { error: 'Pause analysis before exporting media.' }); const options = await body(req); return json(res, 202, exports.start(id, { audioSources: options.audioSources })); }
           if (action === 'artifact' && ['GET', 'HEAD'].includes(req.method)) {
             const requested = url.searchParams.get('path'), target = artifacts.file(id, requested);
             const inline = url.searchParams.get('inline') === '1' && /\.(mp4|m4a|jpg|jpeg|png)$/.test(target);

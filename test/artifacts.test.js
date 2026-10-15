@@ -6,6 +6,7 @@ const os = require('node:os');
 const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { Readable } = require('node:stream');
+const { EventEmitter } = require('node:events');
 const { ArchiveStore, atomicWrite } = require('../server/archive-store');
 const { ProjectStore } = require('../server/project-store');
 const { MeetingArtifacts } = require('../server/meeting-artifacts');
@@ -20,6 +21,41 @@ function fixture(t) {
   m.status = 'failed'; archives.save(m); const artifacts = new MeetingArtifacts(archives, projects);
   return { root, archives, projects, artifacts, m };
 }
+function playbackFixture(t) {
+  const f=fixture(t), raw=f.archives.raw(f.m.id);
+  f.m.status='recorded';f.m.durationSeconds=10;f.m.timeline={originPTS:{seconds:0}};
+  f.m.segments=['system','microphone'].map(kind=>{
+    const file=kind+'-000001.wav', index=kind+'-000001.pts.jsonl';
+    fs.writeFileSync(path.join(raw,file),'synthetic audio bytes');
+    fs.writeFileSync(path.join(raw,index),JSON.stringify({pts:{seconds:0},frameOffset:0,frames:480000})+'\n');
+    return {kind,file,index,sampleRate:48000,frames:480000,startPTS:{seconds:0},endPTS:{seconds:10}};
+  });
+  f.archives.save(f.m);f.archives.refresh=()=>f.m;
+  const child=new EventEmitter();child.unref=()=>{};
+  const exports=new MediaExports(f.archives,f.artifacts,{binary:'/bin/sleep',spawnWorker:()=>child});
+  t.after(()=>child.removeAllListeners());return {...f,exports,child};
+}
+test('playback prepares one audio-only cache from every source and reuses a completed cache', t=>{
+  const f=playbackFixture(t);assert.equal(f.exports.playback(f.m.id).status,'missing');
+  const started=f.exports.playback(f.m.id,{create:true});assert.equal(started.status,'preparing');
+  const dir=path.join(f.archives.dir(f.m.id),'exports',started.jobId);
+  const plan=JSON.parse(fs.readFileSync(path.join(dir,'export-plan.json')));
+  assert.equal(plan.video.length,0);assert.deepEqual(plan.audioSources.sort(),['microphone','system']);assert.equal(plan.mixedAudioGainPerSource,.5);
+  fs.writeFileSync(path.join(dir,'recording.m4a'),'synthetic committed cache');
+  const state=JSON.parse(fs.readFileSync(path.join(dir,'export-status.json')));
+  state.status='ready';state.files=[{path:`exports/${started.jobId}/recording.m4a`}];fs.writeFileSync(path.join(dir,'export-status.json'),JSON.stringify(state));
+  const ready=f.exports.playback(f.m.id,{create:true});assert.equal(ready.status,'ready');assert.equal(ready.jobId,started.jobId);
+  fs.appendFileSync(path.join(f.archives.raw(f.m.id),'system-000001.pts.jsonl'),'\n');
+  assert.equal(f.exports.playback(f.m.id).status,'missing','Changed source index invalidates the old mix');
+});
+test('playback never adopts an arbitrary export and never renders during active recording',t=>{
+  const f=playbackFixture(t),id=crypto.randomUUID(),dir=path.join(f.archives.dir(f.m.id),'exports',id);fs.mkdirSync(dir,{recursive:true});
+  fs.writeFileSync(path.join(dir,'recording.m4a'),'single-source legacy export');
+  fs.writeFileSync(path.join(dir,'export-status.json'),JSON.stringify({id,createdAt:new Date().toISOString(),status:'ready',files:[{path:`exports/${id}/recording.m4a`}]}));
+  assert.equal(f.exports.playback(f.m.id).status,'missing');
+  f.m.status='recording';assert.deepEqual(f.exports.playback(f.m.id,{create:true}),{status:'recording'});
+  f.m.status='recorded';f.m.segments=[];assert.deepEqual(f.exports.playback(f.m.id),{status:'video-only'});
+});
 test('meeting folder copies context documents with hashes; duplicate filenames do not overwrite', async t => {
   const { archives, projects, artifacts, m } = fixture(t), p = projects.create({ name: '合成项目' }); projects.assign(m.id, p.id);
   const input = Buffer.from('会议背景\n保持原样'), hash = crypto.createHash('sha256').update(input).digest('hex');

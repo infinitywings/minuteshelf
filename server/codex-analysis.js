@@ -154,7 +154,7 @@ async function generateCodex({ config, system, prompt, images = [], signal, data
         finish({ text, usage, provider: 'chatgpt-plan', model: config.model });
       }
     });
-    await process.request('initialize', { clientInfo: { name: 'meeting_archive', title: 'MinuteShelf', version: '0.1.10' }, capabilities: { experimentalApi: false } });
+    await process.request('initialize', { clientInfo: { name: 'meeting_archive', title: 'MinuteShelf', version: '0.1.12' }, capabilities: { experimentalApi: false } });
     process.send({ method: 'initialized' });
     const account = await process.request('account/read', { refreshToken: true });
     if (account.account?.type !== 'chatgpt') throw fail('Connect Codex in Settings before starting analysis.', 'provider_auth');

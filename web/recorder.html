@@ -95,17 +95,15 @@
       </section>
     </section>
     <section id="panel-playback" role="tabpanel" aria-labelledby="tab-playback" hidden>
-      <section id="merged-preview" class="card" hidden><div class="label-row"><h2>Full meeting</h2><a id="merged-download">Download video</a></div><video id="merged-video" controls preload="metadata" aria-label="Combined video and audio playback"></video><p class="hint">Pauses and interruptions remain as black video or silence. Exports and originals are saved in the same meeting folder.</p></section>
-      <section class="card media-card"><div class="label-row"><h2>Original recording</h2><button id="playback-export-link" class="quiet">Combine &amp; export ↗</button></div>
-        <video id="video" preload="metadata" playsinline aria-label="Original meeting picture"></video>
+      <section class="card media-card"><div class="label-row"><h2>Meeting recording</h2><button id="playback-export-link" class="quiet">Export recording ↗</button></div>
+        <p id="playback-state" class="hint" role="status"></p><button id="playback-prepare" class="secondary" hidden>Prepare playback</button>
+        <video id="video" preload="metadata" playsinline muted aria-label="Meeting picture"></video>
         <div id="video-gap" class="video-gap" role="status" hidden>Video unavailable at this time. Available audio continues during playback.</div>
         <p id="video-empty" class="hint">No video has been saved. You can play available audio on the meeting timeline.</p>
         <label>Meeting timeline<input type="range" id="timeline" min="0" max="1" step="0.1" value="0"></label>
-        <div class="label-row"><div class="session-controls"><button id="play-session" aria-label="Play meeting recording">Play</button><span class="session-time"><span id="position">00:00</span> / <span id="playback-duration">00:00</span></span></div><div class="audio-options"><label class="check"><input id="listen-system" type="checkbox" checked> System audio</label><label class="check"><input id="listen-mic" type="checkbox"> Microphone</label></div></div>
-        <p class="hint">Playback follows the full meeting timeline. Missing video stays visible as a gap; available audio continues.</p>
-        <audio id="audio-system" preload="metadata"></audio><audio id="audio-microphone" preload="metadata"></audio>
-        <details class="soft-details"><summary>Browse segments</summary><div id="segments"></div></details>
-        <details class="audio-alone"><summary>Audio-only playback</summary><div class="audio-picker"><select id="audio-source" aria-label="Audio-only playback source"><option value="system">System audio</option><option value="microphone">Microphone</option></select><select id="audio-clip" aria-label="Audio segment"></select></div><audio id="standalone-audio" controls preload="metadata" hidden></audio></details>
+        <div class="label-row"><div class="session-controls"><button id="play-session" aria-label="Play meeting recording">Play</button><span class="session-time"><span id="position">00:00</span> / <span id="playback-duration">00:00</span></span></div><label class="playback-volume">Volume<input id="playback-volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Meeting volume"></label></div>
+        <p class="hint">One continuous meeting audio track. Sound continues when a picture is unavailable.</p>
+        <audio id="meeting-audio" preload="auto" aria-label="Combined meeting audio"></audio>
       </section>
       <details class="card recording-details"><summary>Recording details &amp; known gaps</summary><p id="target" class="hint"></p><div class="health"><span id="clock"></span><span id="size"></span><span id="level-mic"></span><span id="level-system"></span><span id="write-health"></span></div><div id="gaps"></div><a id="manifest">Download manifest</a></details>
     </section>
@@ -115,7 +113,7 @@
       <section class="card document-card"><div class="label-row"><h2>Context documents</h2><span class="hint">Original files are copied</span></div><div id="document-list"></div>
         <div class="document-import"><label for="document-files">Add papers, slides, or other documents</label><input id="document-files" type="file" multiple><div class="label-row"><span id="document-state" class="hint" role="status">Up to 100 MB per file</span><button id="documents-import" class="secondary">Import documents</button></div></div>
       </section>
-      <section class="card export-card"><h2>Audio &amp; video</h2><p class="hint">Create an MP4 with audio and a separate M4A file. Choose which audio sources to include; the original tracks are preserved.</p><div class="audio-options"><label class="check"><input id="export-system" type="checkbox" checked> System audio</label><label class="check"><input id="export-mic" type="checkbox" checked> Microphone</label></div><div class="label-row export-action"><span id="export-state" class="hint" role="status"></span><button id="export-media">Create combined files</button></div><div id="export-files"></div></section>
+      <section class="card export-card"><h2>Export recording</h2><p class="hint">Save the meeting as an MP4 and an M4A with all recorded audio combined. Originals are preserved.</p><div class="label-row export-action"><span id="export-state" class="hint" role="status"></span><button id="export-media">Create combined files</button></div><div id="export-files"></div></section>
       <details class="card artifact-details"><summary>Folder &amp; all files</summary><p id="archive-path" class="hint"></p><button id="artifacts-refresh" class="quiet">Refresh files</button><div id="artifact-list"></div></details>
     </section>
     <section id="panel-context" role="tabpanel" aria-labelledby="tab-context" hidden>
