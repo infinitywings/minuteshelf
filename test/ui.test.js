@@ -114,6 +114,26 @@ test('first playback preparation is deduplicated, visibly pending, and never aut
   assert.equal(ui.get('play-session').disabled,false); assert.equal(ui.get('meeting-audio').playCount,0);
 });
 
+test('playback polling preserves the disabled transport until audio preparation is ready', async () => {
+  let state = 'preparing';
+  const ui = harness(undefined, { playback: () => ({ status:state, path:'exports/cache/recording.m4a' }) });
+  sessionPlaybackMeeting(ui);
+  await ui.run('ensureMeetingPlayback(true)');
+  for (let i = 0; i < 4; i++) {
+    ui.advance(150); await ui.run('updateSessionPlayback()');
+    assert.equal(ui.get('play-session').disabled, true, 'Timeline polling must not enable Play during preparation');
+  }
+  ui.run('renderMeeting(current, false)');
+  assert.equal(ui.get('play-session').disabled, true, 'Manifest refresh must preserve the pending state');
+  state = 'ready'; await ui.run('ensureMeetingPlayback(false)');
+  await ui.run('updateSessionPlayback()');
+  assert.equal(ui.get('play-session').disabled, false);
+  assert.equal(ui.get('meeting-audio').playCount, 0, 'Preparation must not autoplay');
+  ui.run("applyPlaybackState({status:'failed',error:'Audio unavailable'})");
+  await ui.run('updateSessionPlayback()');
+  assert.equal(ui.get('play-session').disabled, true, 'An audio failure must require an explicit preparation retry');
+});
+
 test('audio owns the clock during buffering and is never repeatedly sought by playback polling', async () => {
   const ui = harness(); sessionPlaybackMeeting(ui); await ui.run('seek(2,true)');
   const audio = ui.get('meeting-audio'); let at = 2, seeks = 0;

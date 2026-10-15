@@ -496,6 +496,7 @@ function allClips() { return [...(current?.manifest.segments || []), ...(current
 function videoClips() { return allClips().filter(s => s.kind === 'video').sort((a,b) => a.startPTS.seconds - b.startPTS.seconds); }
 const playbackNow = () => typeof performance !== 'undefined' ? performance.now() : Date.now();
 function sessionDuration() { return Math.max(0, Number(current?.manifest.durationSeconds) || 0); }
+function canPlayMeeting() { return sessionDuration() > 0 && ['ready','video-only'].includes(meetingPlayback?.status); }
 function sessionPosition() {
   if (rawPlaying && hasMeetingAudio() && meetingPlayback?.status === 'ready') return Math.min(sessionDuration(), $('meeting-audio').currentTime || 0);
   return rawPlaying ? Math.min(sessionDuration(), rawStartedPosition + (playbackNow() - rawStartedAt) / 1000) : rawPosition;
@@ -513,7 +514,7 @@ function renderSessionPosition(position = sessionPosition()) {
   $('timeline').setAttribute('aria-valuetext', `${seconds(displayed)} of ${seconds(sessionDuration())}`);
   $('play-session').textContent = rawPlaying ? 'Pause' : position >= sessionDuration() && sessionDuration() > 0 ? 'Replay' : 'Play';
   $('play-session').setAttribute('aria-label', rawPlaying ? 'Pause meeting playback' : 'Play meeting recording');
-  $('play-session').disabled = !sessionDuration();
+  $('play-session').disabled = !canPlayMeeting();
 }
 function beginTimelineGesture() {
   if (!current || !sessionDuration()) return;
@@ -637,7 +638,7 @@ function renderPlaybackState() {
     + (meetingPlayback?.error ? ` ${meetingPlayback.error}` : '');
   $('playback-prepare').hidden = !['missing','failed','interrupted','blocked'].includes(state);
   $('playback-prepare').textContent = state === 'missing' ? 'Prepare playback' : 'Retry preparation';
-  $('play-session').disabled = !['ready','video-only'].includes(state);
+  $('play-session').disabled = !canPlayMeeting();
   if (state === 'ready' && audioReady && !audioReady.loaded) $('playback-state').textContent = 'Loading meeting audio…';
 }
 function applyPlaybackState(state) {
