@@ -7,7 +7,7 @@ import Darwin
 enum AnalysisTask: String, CaseIterable, Codable {
     case transcription, vision, summary
     var title: String {
-        switch self { case .transcription: return "Transcription"; case .vision: return "Screen understanding"; case .summary: return "Meeting summaries" }
+        switch self { case .transcription: return "Speech recognition"; case .vision: return "Screen understanding"; case .summary: return "Meeting summaries" }
     }
     var providers: [AnalysisProvider] {
         switch self {
@@ -236,6 +236,7 @@ struct AnalysisPreferencesStore {
     private let credentialInput = NSSecureTextField(string: "")
     private let saveCredential = NSButton(title: "Save Key", target: nil, action: nil)
     private let deleteCredential = NSButton(title: "Delete Key", target: nil, action: nil)
+    private let authorizeCredential = NSButton(title: "Authorize Access…", target: nil, action: nil)
     private let codexShortcut = NSButton(title: "Connect Codex…", target: nil, action: nil)
     private let codexAuthenticationLabel = analysisLabel("ChatGPT sign-in")
     private let credentialRow = NSStackView()
@@ -244,6 +245,10 @@ struct AnalysisPreferencesStore {
     private var checkedScope: AnalysisCredentialScope?
     private var checkedScopeID = ""
     private var hasSavedCredential = false
+    private var credentialReadable = false
+    private var credentialStatusKnown = true
+    private var credentialBusy = false
+    private var credentialProbeGeneration = UUID()
     private let status = analysisLabel("", secondary: true)
     private let catalogStatus = analysisLabel("", secondary: true)
     private let refreshModels = NSButton(title: "Refresh Models", target: nil, action: nil)
@@ -277,11 +282,13 @@ struct AnalysisPreferencesStore {
         credentialInput.setContentHuggingPriority(.defaultLow, for: .horizontal)
         credentialInput.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         credentialRow.orientation = .horizontal; credentialRow.spacing = 8; credentialRow.alignment = .centerY
-        for item in [credentialInput, saveCredential, deleteCredential] { credentialRow.addArrangedSubview(item) }
+        for item in [credentialInput, saveCredential, deleteCredential, authorizeCredential] { credentialRow.addArrangedSubview(item) }
         saveCredential.target = self; saveCredential.action = #selector(saveCredentialPressed)
         deleteCredential.target = self; deleteCredential.action = #selector(deleteCredentialPressed)
+        authorizeCredential.target = self; authorizeCredential.action = #selector(authorizeCredentialPressed)
+        authorizeCredential.toolTip = "Ask macOS to allow this version of MinuteShelf and its background helper to use the saved credential. The token stays in Keychain."
         codexShortcut.target = self; codexShortcut.action = #selector(connectCodexPressed)
-        for button in [saveCredential, deleteCredential, codexShortcut] { button.bezelStyle = .rounded }
+        for button in [saveCredential, deleteCredential, authorizeCredential, codexShortcut] { button.bezelStyle = .rounded }
         let authRow = NSStackView(views: [authentication, codexAuthenticationLabel, codexShortcut]); authRow.orientation = .horizontal; authRow.spacing = 8
         authentication.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let grid = NSGridView(views: [
@@ -339,26 +346,29 @@ struct AnalysisPreferencesStore {
     }
     private func updateControls() {
         let selected = value.provider
-        provider.isEnabled = interactionEnabled
-        endpoint.isEnabled = interactionEnabled && selected.acceptsEndpoint; model.isEnabled = interactionEnabled && selected.acceptsModel
-        authentication.isEnabled = interactionEnabled && selected.supportsCredential
+        let available = interactionEnabled && !credentialBusy
+        provider.isEnabled = available
+        endpoint.isEnabled = available && selected.acceptsEndpoint; model.isEnabled = available && selected.acceptsModel
+        authentication.isEnabled = available && selected.supportsCredential
         authentication.isHidden = selected == .chatGPTPlan; codexAuthenticationLabel.isHidden = selected != .chatGPTPlan
         authentication.item(at: 2)?.isHidden = selected != .chatGPTPlan
         authentication.item(at: 3)?.isHidden = selected != .claudeAgentSDK
         authentication.item(at: 0)?.isHidden = [.claudeAgentSDK, .anthropicAPI].contains(selected)
-        codexShortcut.isHidden = selected != .chatGPTPlan; codexShortcut.isEnabled = interactionEnabled
+        codexShortcut.isHidden = selected != .chatGPTPlan; codexShortcut.isEnabled = available
         let needsCredential = selected.supportsCredential && value.authentication != .none
         credentialRow.isHidden = !needsCredential; credentials.isHidden = !needsCredential
         let token = value.authentication == .claudeCodeOAuthToken
         credentialInput.placeholderString = token ? "Enter Claude Code OAuth token" : "Enter API key"
         saveCredential.title = token ? "Save Token" : "Save Key"; deleteCredential.title = token ? "Delete Token" : "Delete Key"
         refreshCredentialState()
-        credentialInput.isEnabled = interactionEnabled && checkedScope != nil
-        saveCredential.isEnabled = interactionEnabled && checkedScope != nil && !credentialInput.stringValue.isEmpty
-        deleteCredential.isEnabled = interactionEnabled && checkedScope != nil && hasSavedCredential
+        credentialInput.isEnabled = available && checkedScope != nil
+        saveCredential.isEnabled = available && checkedScope != nil && !credentialInput.stringValue.isEmpty
+        deleteCredential.isEnabled = available && checkedScope != nil && hasSavedCredential
+        authorizeCredential.isHidden = credentialReadable || (!hasSavedCredential && credentialStatusKnown)
+        authorizeCredential.isEnabled = available && checkedScope != nil
         refreshModels.isHidden = selected.catalogSource == nil
         catalogStatus.isHidden = selected.catalogSource == nil
-        refreshModels.isEnabled = interactionEnabled && !catalogLoading
+        refreshModels.isEnabled = available && !catalogLoading
         refreshModels.title = catalogLoading ? "Refreshing…" : "Refresh Models"
         catalogStatus.stringValue = selected.catalogSource.flatMap { catalogMessages[$0] } ?? "Model names load automatically. No meeting content is sent."
     }
@@ -366,7 +376,8 @@ struct AnalysisPreferencesStore {
         let current = value
         let id = [current.provider.rawValue, current.authentication.rawValue, current.endpoint].joined(separator: "\n")
         guard force || id != checkedScopeID else { return }
-        checkedScopeID = id; checkedScope = nil; hasSavedCredential = false
+        checkedScopeID = id; checkedScope = nil; hasSavedCredential = false; credentialReadable = false; credentialStatusKnown = true
+        credentialProbeGeneration = UUID(); let generation = credentialProbeGeneration
         // Never carry a typed secret across provider/auth/endpoint changes.
         credentialInput.stringValue = ""
         guard current.provider.supportsCredential, current.authentication != .none else { return }
@@ -376,11 +387,30 @@ struct AnalysisPreferencesStore {
             checkedScope = scope
             hasSavedCredential = try credentialStore.contains(scope)
             credentials.stringValue = hasSavedCredential
-                ? "Saved in macOS Keychain for this task, provider, authentication, and endpoint. Enter a replacement to update it."
+                ? "Saved in macOS Keychain. Checking background access…"
                 : current.authentication == .claudeCodeOAuthToken
                     ? "No token saved. Use a Claude Code OAuth token from the official Claude Code login flow; this is separate from an API key."
                     : "No key saved for this task and endpoint. Keys are stored in macOS Keychain, never in the preferences file."
-        } catch { credentials.stringValue = error.localizedDescription }
+            if hasSavedCredential {
+                Task { [weak self] in
+                    guard let self else { return }
+                    do {
+                        let state = try await AnalysisCredentialProbe.status(scope, dataDirectory: self.dataDirectory)
+                        guard self.credentialProbeGeneration == generation else { return }
+                        self.hasSavedCredential = state.stored; self.credentialReadable = state.readable
+                        self.credentials.stringValue = state.readable
+                            ? "Saved in macOS Keychain. Background access verified for this version of MinuteShelf."
+                            : state.stored
+                                ? "Saved, but background access is unavailable. Unlock your login Keychain and choose Authorize Access."
+                                : "No credential is saved for this task and provider."
+                    } catch {
+                        guard self.credentialProbeGeneration == generation else { return }
+                        self.credentialStatusKnown = false; self.credentials.stringValue = error.localizedDescription
+                    }
+                    self.updateControls()
+                }
+            }
+        } catch { credentialStatusKnown = false; credentials.stringValue = error.localizedDescription }
     }
     @objc private func saveCredentialPressed() {
         guard interactionEnabled, let scope = checkedScope else { return }
@@ -393,6 +423,21 @@ struct AnalysisPreferencesStore {
         guard interactionEnabled, let scope = checkedScope else { return }
         do { try credentialStore.delete(scope); refreshCredentialState(force: true); updateControls() }
         catch { credentials.stringValue = error.localizedDescription }
+    }
+    @objc private func authorizeCredentialPressed() {
+        guard interactionEnabled, !credentialBusy, let scope = checkedScope else { return }
+        credentialBusy = true; credentialProbeGeneration = UUID(); updateControls()
+        credentials.stringValue = "Complete the macOS Keychain prompt to authorize this app version."
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let store = self.credentialStore
+                try await Task.detached(priority: .userInitiated) { try store.authorize(scope) }.value
+                self.credentialBusy = false; self.refreshCredentialState(force: true); self.updateControls()
+            } catch {
+                self.credentialBusy = false; self.updateControls(); self.credentials.stringValue = error.localizedDescription
+            }
+        }
     }
     @objc private func connectCodexPressed() { onConnectCodex?() }
     func setInteractionEnabled(_ enabled: Bool) { interactionEnabled = enabled; updateControls() }
@@ -463,6 +508,13 @@ struct AnalysisPreferencesStore {
     private var loadFailed = false
     private var interactionEnabled = true
     var settingsFile: URL { store.file }
+    var localSTTRequest: ((Bool) async throws -> [String: Any])?
+    private let installLocalSTT = NSButton(title: "Install / Update Local STT…", target: nil, action: nil)
+    private let speechSetupStatus = analysisLabel("Install the saved speech model separately from meeting analysis.", secondary: true)
+    private let speechSetupRow = NSStackView()
+    private var speechSetupBusy = false
+    private var speechSetupBlocked = false
+    private var speechSetupPoll: Task<Void, Never>?
     init(dataDirectory: URL) {
         store = AnalysisPreferencesStore(dataDirectory: dataDirectory)
         catalogStore = ModelCatalogStore(dataDirectory: dataDirectory)
@@ -510,7 +562,16 @@ struct AnalysisPreferencesStore {
                 guard let self, let editor else { return }
                 self.refreshCatalog(for: editor.value.provider, force: force)
             }
-            add(section(task.title, content: editor))
+            if task == .transcription {
+                installLocalSTT.bezelStyle = .rounded; installLocalSTT.target = self; installLocalSTT.action = #selector(installSpeechRuntime)
+                speechSetupRow.orientation = .vertical; speechSetupRow.alignment = .leading; speechSetupRow.spacing = 8
+                speechSetupRow.addArrangedSubview(installLocalSTT); speechSetupRow.addArrangedSubview(speechSetupStatus)
+                let speech = NSStackView(views: [editor, speechSetupRow]); speech.orientation = .vertical; speech.alignment = .leading; speech.spacing = 10
+                editor.widthAnchor.constraint(equalTo: speech.widthAnchor).isActive = true
+                speechSetupRow.widthAnchor.constraint(equalTo: speech.widthAnchor).isActive = true
+                speechSetupStatus.widthAnchor.constraint(equalTo: speechSetupRow.widthAnchor).isActive = true
+                add(section(task.title, content: speech))
+            } else { add(section(task.title, content: editor)) }
         }
         policy.addItems(withTitles: ["Local only", "Allow selected remote providers"])
         policy.target = self; policy.action = #selector(preferenceChanged)
@@ -557,6 +618,7 @@ struct AnalysisPreferencesStore {
         policy.isEnabled = interactionEnabled; save.isEnabled = interactionEnabled && !loadFailed
         for button in [images, audio, transcripts, context] { button.isEnabled = interactionEnabled && selectedPolicy == .selectedRemoteAllowed }
         updateCodexConnection()
+        updateSpeechSetupControls()
     }
     func setInteractionEnabled(_ enabled: Bool) { interactionEnabled = enabled; if isViewLoaded { updateStatus() } }
     private func changed() { updateStatus(); if !loadFailed { message.stringValue = "Unsaved preferences. Saving does not start meeting analysis." } }
@@ -572,6 +634,7 @@ struct AnalysisPreferencesStore {
     }
     func refreshModelCatalogsIfNeeded() {
         guard isViewLoaded else { return }
+        refreshSpeechSetup()
         for editor in editors.values { refreshCatalog(for: editor.value.provider, force: false) }
     }
     private func refreshCatalog(for provider: AnalysisProvider, force: Bool) {
@@ -653,6 +716,55 @@ struct AnalysisPreferencesStore {
         do { apply(try store.save(value)); message.stringValue = "Saved on this Mac. No meeting analysis has started." }
         catch { message.stringValue = "Not saved: \(error.localizedDescription)" }
     }
+    private var speechPreferencesSaved: Bool {
+        guard FileManager.default.fileExists(atPath: store.file.path), let current = editors[.transcription]?.value, let saved = try? store.load().tasks.transcription else { return false }
+        return current.provider == saved.provider && current.model == saved.model && current.endpoint == saved.endpoint && current.authentication == saved.authentication
+    }
+    private func updateSpeechSetupControls() {
+        let local = editors[.transcription].map { [.localQwen, .localMiMo].contains($0.value.provider) } ?? false
+        speechSetupRow.isHidden = !local
+        installLocalSTT.isEnabled = interactionEnabled && !loadFailed && !speechSetupBusy && !speechSetupBlocked && speechPreferencesSaved
+        if local && !speechPreferencesSaved { speechSetupStatus.stringValue = "Save Preferences before installing the selected speech model." }
+    }
+    private func displaySpeechSetup(_ value: [String: Any]) {
+        speechSetupBlocked = value["busy"] as? Bool == true || value["recording"] as? Bool == true
+        let state = value["installation"] as? [String: Any] ?? (value["status"] == nil ? nil : value)
+        speechSetupBusy = state?["status"] as? String == "installing"
+        speechSetupStatus.stringValue = (state?["message"] as? String).map { String($0.prefix(1000)) }
+            ?? (speechSetupBlocked ? "Wait for recording or analysis to finish before installing a model." : "Install or update the saved speech model. No meeting audio is uploaded.")
+        updateSpeechSetupControls()
+        if speechSetupBusy || speechSetupBlocked {
+            speechSetupPoll?.cancel()
+            speechSetupPoll = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, !Task.isCancelled, !self.codexStopped, self.view.window?.isVisible == true else { return }
+                self.refreshSpeechSetup()
+            }
+        }
+    }
+    func refreshSpeechSetup() {
+        guard interactionEnabled, !codexStopped, let request = localSTTRequest else { return }
+        Task { [weak self] in
+            do { let state = try await request(false); guard let self, !self.codexStopped else { return }; self.displaySpeechSetup(state) }
+            catch { self?.speechSetupStatus.stringValue = error.localizedDescription }
+        }
+    }
+    @objc private func installSpeechRuntime() {
+        guard installLocalSTT.isEnabled, let window = view.window, let request = localSTTRequest,
+              let config = editors[.transcription]?.value else { return }
+        let alert = NSAlert(); alert.messageText = "Install local speech recognition?"
+        alert.informativeText = "Download the private Python/MLX runtime and \(config.model). Model files may take several GB. Python 3.11 or later is required. No meeting audio is uploaded, and installation pauses for a new recording."
+        alert.addButton(withTitle: "Download & Install"); alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn, self.interactionEnabled, self.speechPreferencesSaved,
+                  self.editors[.transcription]?.value.model == config.model else { return }
+            self.speechSetupBusy = true; self.updateSpeechSetupControls()
+            Task {
+                do { self.displaySpeechSetup(try await request(true)) }
+                catch { self.speechSetupBusy = false; self.updateSpeechSetupControls(); self.speechSetupStatus.stringValue = error.localizedDescription }
+            }
+        }
+    }
     private func buildCodexConnection() -> NSView {
         codexStatus.font = .systemFont(ofSize: 13, weight: .semibold)
         codexAccount.isSelectable = true; codexDetail.isSelectable = true
@@ -728,6 +840,7 @@ struct AnalysisPreferencesStore {
     @objc private func checkCodexConnection() { performCodexAction(.refresh) }
     @objc private func disconnectCodexAccount() { performCodexAction(.disconnect) }
     func stopCodexConnection() {
+        speechSetupPoll?.cancel(); speechSetupPoll = nil
         codexStopped = true; codexActionTask?.cancel(); codexActionTask = nil
         for task in catalogTasks.values { task.cancel() }; catalogTasks.removeAll()
         publishedCatalogTask?.cancel(); publishedCatalogTask = nil

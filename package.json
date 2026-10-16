@@ -1,6 +1,6 @@
 {
   "name": "minuteshelf",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "description": "MinuteShelf: a macOS meeting recorder with local speech and modular post-meeting AI.",
   "license": "MIT",
   "repository": {

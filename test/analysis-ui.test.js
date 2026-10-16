@@ -179,10 +179,9 @@ test('screen evidence opens its inline details without creating a browser window
   assert.equal(ui.all(row).find(node => node.tagName === 'img').src, '/artifact/A/outputs/run-A/frames/frame.jpg');
 });
 
-test('model download requires its own explicit confirmation and does not start analysis', async () => {
+test('meeting analysis opens native settings without starting a model download', async () => {
   const ui = harness(({ method, url }) => method === 'GET' ? state({ settings: { tasks: { transcription: { provider: 'local-qwen', model: 'fixture-local' } } } }) : {});
-  await ui.open('A'); await ui.get('analysis-install').click();
-  assert.equal(ui.requests.some(r => r.method === 'POST'), false); assert.match(ui.get('analysis-review-details').textContent, /No meeting audio is uploaded/);
-  await ui.get('analysis-review-confirm').click();
-  assert.deepEqual(ui.requests.filter(r => r.method === 'POST'), [{ method: 'POST', url: '/api/analysis/runtime-install', body: {} }]);
+  await ui.open('A'); await ui.get('analysis-settings').click();
+  assert.equal(ui.requests.some(r => r.method === 'POST'), false);
+  assert.equal(ui.get('analysis-review').open, false);
 });

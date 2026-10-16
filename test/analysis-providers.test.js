@@ -8,6 +8,7 @@ const { PassThrough } = require('node:stream');
 const { generate, transcribeAPI, endpointURL } = require('../server/analysis-providers');
 const { generateCodex, managedCodexHome } = require('../server/codex-analysis');
 const { generateClaude } = require('../server/claude-analysis');
+const { readCredential } = require('../server/analysis-settings');
 
 const base = { provider: 'anthropic-api', endpoint: '', model: 'test-model', authentication: 'api-key' };
 const json = value => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
@@ -34,7 +35,7 @@ function codexResponder(variation) {
     const response = result => send({ id: m.id, result });
     if (m.method === 'initialize') response({});
     if (m.method === 'account/read') response({ account: { type: 'chatgpt' } });
-    if (m.method === 'config/read') response({ config: {} });
+    if (m.method === 'config/read') response({ config: { features: { plugins:variation === 'plugins-enabled', remote_plugin:false, hooks:false, apps:false, shell_tool:false, unified_exec:false } } });
     if (m.method === 'thread/start') response({ thread: { id: 'thread-1', ephemeral: true }, sandbox: { type: 'readOnly' }, approvalPolicy: 'never', instructionSources: [] });
     if (m.method === 'turn/start') {
       response({ turn: { id: 'turn-1' } });
@@ -107,7 +108,9 @@ test('Codex shares only managed Keychain scope, disables tools, sends data image
   const root = await temporary(t); const capture = {};
   const result = await generateCodex({ config: { model: 'test-model' }, system: 'Analyze supplied evidence.', prompt: 'private meeting', images: [{ mimeType: 'image/png', data: 'ZmFrZQ==' }], dataDirectory: root, spawnImpl: fakeSpawn(codexResponder(), capture) });
   assert.equal(result.text, 'Final summary.'); assert.equal(capture.options.env.CODEX_HOME, path.join(await fs.realpath(root), 'connections/codex'));
-  assert.notEqual(capture.options.env.HOME, os.homedir()); assert.equal(capture.options.env.OPENAI_API_KEY, undefined); assert.equal(capture.options.env.HTTPS_PROXY, undefined);
+  assert.equal(capture.options.env.HOME, os.homedir(), 'Keychain must use the same account home as sign-in');
+  assert.notEqual(capture.options.cwd, os.homedir()); assert.equal(capture.options.env.TMPDIR, capture.options.cwd);
+  assert.equal(capture.options.env.OPENAI_API_KEY, undefined); assert.equal(capture.options.env.HTTPS_PROXY, undefined);
   assert.ok(capture.args.includes('features.shell_tool=false')); assert.ok(capture.args.includes('features.hooks=false'));
   const thread = capture.calls.find(value => value.method === 'thread/start'); assert.equal(thread.params.ephemeral, true); assert.equal(thread.params.sandbox, 'read-only');
   const turn = capture.calls.find(value => value.method === 'turn/start'); assert.equal(turn.params.input[1].type, 'image'); assert.match(turn.params.input[1].url, /^data:image/);
@@ -133,6 +136,35 @@ test('managed Codex rejects symlink storage and custom configuration', async t =
   await assert.rejects(managedCodexHome(root), /custom configuration/);
   const root2 = await temporary(t), outside = await temporary(t); await fs.symlink(outside, path.join(root2, 'connections'));
   await assert.rejects(managedCodexHome(root2), /private local folder/);
+});
+test('Codex accepts inert remote plugin caches without loading tools or changing cached files', async t => {
+  const root = await temporary(t), home = await managedCodexHome(root), capture = {};
+  const file = path.join(home, 'plugins/cache/remote/example/1.0.0/plugin.json');
+  await fs.mkdir(path.dirname(file), { recursive:true }); await fs.writeFile(file, '{"name":"synthetic cached plugin"}');
+  const before = await fs.readFile(file);
+  await generateCodex({ config:{model:'test-model'}, system:'', prompt:'synthetic', dataDirectory:root, spawnImpl:fakeSpawn(codexResponder(),capture) });
+  assert(capture.args.includes('features.plugins=false')); assert(capture.args.includes('features.remote_plugin=false'));
+  assert.deepEqual(await fs.readFile(file), before);
+  await fs.writeFile(path.join(home,'plugins/custom-config.json'), '{}');
+  await assert.rejects(managedCodexHome(root), /unsupported configuration/);
+});
+test('Codex rejects redirected plugin caches and active plugins before sending meeting input', async t => {
+  const root = await temporary(t), home = await managedCodexHome(root), outside = await temporary(t);
+  await fs.mkdir(path.join(home,'plugins')); await fs.symlink(outside,path.join(home,'plugins/cache'));
+  await assert.rejects(managedCodexHome(root), /unsupported configuration/);
+  const capture = {};
+  await assert.rejects(generateCodex({config:{model:'test-model'},system:'',prompt:'private',dataDirectory:await temporary(t),spawnImpl:fakeSpawn(codexResponder('plugins-enabled'),capture)}), /did not disable/);
+  assert(!capture.calls.some(call=>call.method==='turn/start'));
+});
+test('credential errors distinguish missing items from authorization failures without forwarding helper output', async () => {
+  for (const [code, pattern] of [['credential_missing',/no credential is saved/],['keychain_authorization_required',/Authorize Access/],['keychain_unavailable',/Keychain is unavailable/],['untrusted-secret',/could not read/]]) {
+    const spawnProcess = (_binary, arguments_) => {
+      assert.deepEqual(arguments_, ['--credential-helper'], 'Background reads must use the main application credential mode');
+      const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.kill = () => {};
+      child.stdin.on('finish',()=>queueMicrotask(()=>{child.stdout.write(JSON.stringify({error:{code,message:'do-not-echo-secret'}}));child.stderr.write('do-not-echo-secret');child.emit('close',1);}));return child;
+    };
+    await assert.rejects(readCredential({config:{task:'vision',provider:'claude-agent-sdk',authentication:'claude-code-oauth-token',endpoint:''},dataDirectory:'/synthetic',binary:process.execPath,spawnProcess}),error=>pattern.test(error.message)&&error.message.startsWith('Screen understanding:')&&!error.message.includes('do-not-echo-secret')&&!error.message.includes('untrusted-secret'));
+  }
 });
 test('Claude OAuth uses only child environment; initializes with no tools and supplies images', async t => {
   const root = await temporary(t); const executable = path.join(root, 'claude'); await fs.writeFile(executable, '', { mode: 0o700 }); const capture = {};

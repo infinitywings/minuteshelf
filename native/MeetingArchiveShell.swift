@@ -180,13 +180,14 @@ private final class ArchiveNavigationTableView: NSTableView {
 }
 private final class ArchiveProjectDisclosure: NSButton { var projectId = "" }
 
-@MainActor final class MeetingArchiveShell: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSToolbarDelegate {
+@MainActor final class MeetingArchiveShell: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate, NSToolbarDelegate, NSTabViewDelegate {
     let split = NSSplitViewController()
     private let sidebarController = ArchiveContentViewController()
     private let contentController = ArchiveContentViewController()
     private let web: WKWebView
     private weak var window: NSWindow?
     var onAction: ((String, [String: Any]) -> Void)?
+    var localSTTRequest: ((Bool) async throws -> [String: Any])?
     var onSettings: (() -> Void)?
     private(set) var snapshot: ArchiveShellSnapshot?
     private(set) var snapshotReceived = false
@@ -778,16 +779,26 @@ private final class ArchiveProjectDisclosure: NSButton { var projectId = "" }
         onAction?("settings-refresh", [:])
     }
     func stopCodexConnection() { analysisPreferences?.stopCodexConnection() }
+    func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        // NSTabView owns plain views, so NSViewController appearance callbacks
+        // do not restart the polling that stopped while Analysis was hidden.
+        guard tabViewItem?.identifier as? String == "analysis" else { return }
+        analysisPreferences?.refreshSpeechSetup()
+    }
     private func constructSettings() {
         guard settingsWindow == nil else { return }
         let panel = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 700, height: 570), styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         panel.title = "MinuteShelf Settings"; panel.isReleasedWhenClosed = false; panel.center()
         panel.contentMinSize = NSSize(width: 660, height: 520)
-        let tabs = NSTabView(); tabs.tabViewType = .topTabsBezelBorder
+        let tabs = NSTabView(); tabs.tabViewType = .topTabsBezelBorder; tabs.delegate = self
         let general = NSTabViewItem(identifier: "general"); general.label = "General"; general.view = NSView()
         tabs.addTabViewItem(general)
         if let dataDirectory {
             let analysis = AnalysisPreferencesViewController(dataDirectory: dataDirectory)
+            analysis.localSTTRequest = { [weak self] install in
+                guard let request = self?.localSTTRequest else { throw NSError(domain: "LocalSTT", code: 1, userInfo: [NSLocalizedDescriptionKey:"The local service is unavailable."]) }
+                return try await request(install)
+            }
             analysisPreferences = analysis
             let item = NSTabViewItem(identifier: "analysis"); item.label = "Analysis"; item.view = analysis.view
             tabs.addTabViewItem(item)

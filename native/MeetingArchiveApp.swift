@@ -224,6 +224,11 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
         nativeShell = MeetingArchiveShell(web: web, window: window)
         nativeShell.onAction = { [weak self] action, payload in self?.perform(action, payload: payload) }
         nativeShell.onSettings = { [weak self] in self?.settings() }
+        nativeShell.localSTTRequest = { [weak self] install in
+            guard let self else { throw appFailure("The local service is unavailable.") }
+            return try await self.request("api/analysis/runtime-install", method: install ? "POST" : "GET", successCodes: install ? [202] : [200],
+                failureMessage: "Local speech setup is unavailable. Save your speech preferences and wait for recording or analysis to finish.")
+        }
         window.center()
         if !smoke { window.setFrameAutosaveName("MeetingArchiveMainWindow") }
     }
@@ -416,14 +421,14 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
         }
         return .terminateLater
     }
-    private func request(_ route: String, method: String = "GET") async throws -> [String: Any] {
+    private func request(_ route: String, method: String = "GET", successCodes: Set<Int> = [200], failureMessage: String? = nil) async throws -> [String: Any] {
         guard let connection else { throw appFailure("The local service is not ready.") }
         var request = URLRequest(url: connection.url.appendingPathComponent(route))
         request.httpMethod = method; request.setValue("Bearer " + connection.token, forHTTPHeaderField: "Authorization")
         if method == "POST" { request.setValue("application/json", forHTTPHeaderField: "Content-Type"); request.httpBody = Data("{}".utf8) }
         let (data, response) = try await session.data(for: request)
-        guard data.count <= 8 * 1024 * 1024, let response = response as? HTTPURLResponse, connection.contains(response.url), response.statusCode == 200,
-              let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw appFailure("The local service did not confirm that the request succeeded. The recording will not be forcibly stopped.") }
+        guard data.count <= 8 * 1024 * 1024, let response = response as? HTTPURLResponse, connection.contains(response.url), successCodes.contains(response.statusCode),
+              let result = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw appFailure(failureMessage ?? "The local service did not confirm that the request succeeded. The recording will not be forcibly stopped.") }
         return result
     }
     private func activeRecordings() async throws -> [[String: Any]] {
@@ -596,6 +601,9 @@ final class NoRedirects: NSObject, URLSessionTaskDelegate {
 }
 @main struct MeetingArchiveMain {
     @MainActor static func main() {
+        if CommandLine.arguments.dropFirst().first == "--credential-helper" {
+            AnalysisCredentialCommand.run(arguments: ["--credential-helper"]); return
+        }
         let app = NSApplication.shared, delegate = MeetingArchiveApplication()
         app.delegate = delegate
         withExtendedLifetime(delegate) { app.run() }

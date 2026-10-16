@@ -1,9 +1,29 @@
 import Foundation
 import Security
 import CryptoKit
+import Darwin
 
 enum AnalysisCredentialError: Error, LocalizedError {
-    case invalidScope, invalidKey, missing, unavailable, trustUnavailable
+    case invalidScope, invalidKey, missing, unavailable, trustUnavailable, interactionRequired, userCancelled
+    var code: String {
+        switch self {
+        case .invalidScope: return "credential_scope"
+        case .invalidKey: return "credential_invalid"
+        case .missing: return "credential_missing"
+        case .unavailable: return "keychain_unavailable"
+        case .trustUnavailable: return "credential_helper_trust"
+        case .interactionRequired: return "keychain_authorization_required"
+        case .userCancelled: return "keychain_cancelled"
+        }
+    }
+    static func from(_ status: OSStatus) -> AnalysisCredentialError {
+        switch status {
+        case errSecItemNotFound: return .missing
+        case errSecInteractionNotAllowed, errSecAuthFailed: return .interactionRequired
+        case errSecUserCanceled: return .userCancelled
+        default: return .unavailable
+        }
+    }
     var errorDescription: String? {
         switch self {
         case .invalidScope: return "Choose a supported provider and authentication method, with a valid endpoint where required."
@@ -11,6 +31,8 @@ enum AnalysisCredentialError: Error, LocalizedError {
         case .missing: return "No credential is saved for this task, provider, authentication, and endpoint. Save it in Settings → Analysis."
         case .unavailable: return "Keychain access failed. Unlock your login Keychain, then save the credential again in Settings → Analysis."
         case .trustUnavailable: return "The app's credential helper could not be trusted. Reinstall the complete app before saving a credential."
+        case .interactionRequired: return "Keychain needs authorization for this version of MinuteShelf. Unlock your login Keychain, then choose Authorize Access in Settings → Analysis."
+        case .userCancelled: return "Keychain authorization was cancelled. Your saved credential was preserved."
         }
     }
 }
@@ -65,6 +87,7 @@ protocol AnalysisCredentialBackend {
     func read(_ scope: AnalysisCredentialScope) throws -> Data
     func save(_ data: Data, scope: AnalysisCredentialScope) throws
     func delete(_ scope: AnalysisCredentialScope) throws
+    func authorize(_ scope: AnalysisCredentialScope) throws
 }
 
 struct AnalysisCredentialStore {
@@ -76,6 +99,7 @@ struct AnalysisCredentialStore {
     }
     func save(_ key: String, scope: AnalysisCredentialScope) throws { try Self.validate(key); try backend.save(Data(key.utf8), scope: scope) }
     func delete(_ scope: AnalysisCredentialScope) throws { try backend.delete(scope) }
+    func authorize(_ scope: AnalysisCredentialScope) throws { try backend.authorize(scope) }
     static func validate(_ key: String) throws {
         guard !key.isEmpty, key.utf8.count <= 8192, key.unicodeScalars.allSatisfy({ (0x21...0x7e).contains($0.value) }) else { throw AnalysisCredentialError.invalidKey }
     }
@@ -96,21 +120,20 @@ struct AnalysisKeychainBackend: AnalysisCredentialBackend {
         var request = query(scope); request[kSecMatchLimit as String] = kSecMatchLimitOne
         let code = SecItemCopyMatching(request as CFDictionary, nil)
         if code == errSecItemNotFound { return false }
-        guard code == errSecSuccess else { throw AnalysisCredentialError.unavailable }; return true
+        guard code == errSecSuccess else { throw AnalysisCredentialError.from(code) }; return true
     }
     func read(_ scope: AnalysisCredentialScope) throws -> Data {
         var request = query(scope); request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
         var result: CFTypeRef?
         let code = SecItemCopyMatching(request as CFDictionary, &result)
-        if code == errSecItemNotFound { throw AnalysisCredentialError.missing }
-        guard code == errSecSuccess, let data = result as? Data else { throw AnalysisCredentialError.unavailable }; return data
+        guard code == errSecSuccess else { throw AnalysisCredentialError.from(code) }
+        guard let data = result as? Data else { throw AnalysisCredentialError.unavailable }; return data
     }
     private func access() throws -> SecAccess {
         let bundle = Bundle.main.bundleURL
         guard bundle.pathExtension == "app", let mainExecutable = Bundle.main.executableURL else { throw AnalysisCredentialError.trustUnavailable }
-        let helper = bundle.appendingPathComponent("Contents/Helpers/analysis-credentials")
         var applications: [SecTrustedApplication] = []
-        for url in [mainExecutable, helper] {
+        for url in [mainExecutable] {
             guard FileManager.default.isExecutableFile(atPath: url.path) else { throw AnalysisCredentialError.trustUnavailable }
             var application: SecTrustedApplication?
             guard SecTrustedApplicationCreateFromPath(url.path, &application) == errSecSuccess, let application else { throw AnalysisCredentialError.trustUnavailable }
@@ -121,7 +144,7 @@ struct AnalysisKeychainBackend: AnalysisCredentialBackend {
         return access
     }
     func save(_ data: Data, scope: AnalysisCredentialScope) throws {
-        // Give only the signed app and its bundled reader access. Never grant
+        // The background reader is this same signed executable. Never grant
         // an empty/all-applications ACL to work around local signing changes.
         let trustedAccess = try access()
         var request = query(scope); request[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIAllow
@@ -133,12 +156,149 @@ struct AnalysisKeychainBackend: AnalysisCredentialBackend {
             if let keychain { request[kSecUseKeychain as String] = keychain }
             request.merge(attributes) { _, new in new }
             request[kSecAttrLabel as String] = "MinuteShelf · \(scope.task) · \(scope.provider)"
-            guard SecItemAdd(request as CFDictionary, nil) == errSecSuccess else { throw AnalysisCredentialError.unavailable }
-        } else if updated != errSecSuccess { throw AnalysisCredentialError.unavailable }
+            let added = SecItemAdd(request as CFDictionary, nil)
+            guard added == errSecSuccess else { throw AnalysisCredentialError.from(added) }
+        } else if updated != errSecSuccess { throw AnalysisCredentialError.from(updated) }
     }
     func delete(_ scope: AnalysisCredentialScope) throws {
         var request = query(scope); request[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIAllow
         let code = SecItemDelete(request as CFDictionary)
-        guard code == errSecSuccess || code == errSecItemNotFound else { throw AnalysisCredentialError.unavailable }
+        guard code == errSecSuccess || code == errSecItemNotFound else { throw AnalysisCredentialError.from(code) }
+    }
+    func authorize(_ scope: AnalysisCredentialScope) throws {
+        // Only the visible app may initiate this user-requested repair. Keep
+        // the value in memory and restore trust to this app and its helper.
+        _ = try access()
+        var request = query(scope); request[kSecUseAuthenticationUI as String] = kSecUseAuthenticationUIAllow
+        request[kSecReturnData as String] = true; request[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: CFTypeRef?
+        let code = SecItemCopyMatching(request as CFDictionary, &result)
+        guard code == errSecSuccess else { throw AnalysisCredentialError.from(code) }
+        guard let data = result as? Data else { throw AnalysisCredentialError.unavailable }
+        try save(data, scope: scope)
+    }
+}
+
+struct AnalysisCredentialStatus: Decodable {
+    let stored: Bool
+    let readable: Bool
+    let errorCode: String?
+}
+
+enum AnalysisCredentialProbe {
+    static func status(_ scope: AnalysisCredentialScope, dataDirectory: URL) async throws -> AnalysisCredentialStatus {
+        let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/node")
+        let module = Bundle.main.bundleURL.appendingPathComponent("Contents/Resources/runtime/server/analysis-settings.js")
+        // Exercise the exact backend -> reader route, returning status only.
+        let script = "const r=JSON.parse(require('node:fs').readFileSync(0,'utf8'));require(process.argv[1]).readCredential({operation:'status',dataDirectory:r.dataDirectory,config:r}).then(v=>process.stdout.write(JSON.stringify(v))).catch(()=>{process.exitCode=1;});"
+        let input = try JSONSerialization.data(withJSONObject: ["operation":"status", "dataDirectory":dataDirectory.path,
+            "task":scope.task, "provider":scope.provider, "authentication":scope.authentication,
+            "endpoint":scope.provider == "claude-agent-sdk" ? "" : scope.endpoint])
+        return try await Task.detached(priority: .utility) {
+            let child = Process(), stdin = Pipe(), stdout = Pipe()
+            child.executableURL = executable; child.arguments = ["-e", script, module.path]; child.environment = ["PATH":"/usr/bin:/bin"]
+            child.standardInput = stdin; child.standardOutput = stdout; child.standardError = FileHandle.nullDevice
+            do { try child.run() } catch { throw AnalysisCredentialError.trustUnavailable }
+            let timeout = DispatchWorkItem {
+                if child.isRunning { child.terminate() }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 1) { if child.isRunning { kill(child.processIdentifier, SIGKILL) } }
+            }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 10, execute: timeout)
+            defer {
+                timeout.cancel(); try? stdin.fileHandleForWriting.close(); try? stdout.fileHandleForReading.close()
+                if child.isRunning { child.terminate() }
+            }
+            try stdin.fileHandleForWriting.write(contentsOf: input); try stdin.fileHandleForWriting.close()
+            child.waitUntilExit()
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            guard child.terminationStatus == 0, data.count <= 16384,
+                  let value = try? JSONDecoder().decode(AnalysisCredentialStatus.self, from: data) else { throw AnalysisCredentialError.unavailable }
+            return value
+        }.value
+    }
+}
+
+// The visible app and noninteractive reader use the same code identity.
+// Separate ad-hoc helpers can fail Keychain authorization after an update.
+enum AnalysisCredentialCommand {
+    private static func codeMatches(_ pid: pid_t, executable: URL) -> Bool {
+        var expected: SecStaticCode?, requirement: SecRequirement?, running: SecCode?
+        guard SecStaticCodeCreateWithPath(executable as CFURL, [], &expected) == errSecSuccess, let expected,
+              SecCodeCopyDesignatedRequirement(expected, [], &requirement) == errSecSuccess, let requirement,
+              SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary, [], &running) == errSecSuccess,
+              let running else { return false }
+        return SecCodeCheckValidity(running, [], requirement) == errSecSuccess
+    }
+    private static func parent(of pid: pid_t) -> pid_t? {
+        var info = kinfo_proc(), size = MemoryLayout<kinfo_proc>.size
+        var query: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        guard sysctl(&query, u_int(query.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+        return info.kp_eproc.e_ppid
+    }
+    private static func trustedCaller() -> Bool {
+        var bundle = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
+        while bundle.pathExtension != "app" && bundle.path != "/" { bundle.deleteLastPathComponent() }
+        guard bundle.pathExtension == "app" else { return false }
+        let main = bundle.appendingPathComponent("Contents/MacOS/MeetingArchive"), caller = getppid()
+        if codeMatches(caller, executable: main) { return true }
+        // A signed interpreter alone is not enough: the bundled Node must
+        // itself have been launched by this app, not an unrelated local script.
+        guard codeMatches(caller, executable: bundle.appendingPathComponent("Contents/Helpers/node")),
+              let owner = parent(of: caller) else { return false }
+        return codeMatches(owner, executable: main)
+    }
+    private struct Request: Decodable {
+        let operation: String?
+        let dataDirectory: String
+        let task: String
+        let provider: String
+        let endpoint: String
+        let authentication: String
+    }
+    static func run(arguments: [String]) {
+        // kSecUseAuthenticationUI is not sufficient for every legacy Keychain
+        // operation. This isolated reader must never spawn a hidden prompt.
+        SecKeychainSetUserInteractionAllowed(false)
+        do {
+            // Secrets must only travel through the private child-process pipe,
+            // never command arguments, environment, browser routes, or a TTY.
+            func isPrivatePipe(_ descriptor: Int32) -> Bool {
+                var info = stat()
+                guard fstat(descriptor, &info) == 0 else { return false }
+                let kind = info.st_mode & mode_t(S_IFMT)
+                return kind == mode_t(S_IFIFO) || kind == mode_t(S_IFSOCK)
+            }
+            guard Array(CommandLine.arguments.dropFirst()) == arguments, isPrivatePipe(STDIN_FILENO), isPrivatePipe(STDOUT_FILENO), trustedCaller() else { throw AnalysisCredentialError.invalidScope }
+            var input = Data()
+            while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
+                input.append(chunk); guard input.count <= 32768 else { throw AnalysisCredentialError.invalidScope }
+            }
+            let request = try JSONDecoder().decode(Request.self, from: input)
+            guard request.dataDirectory.hasPrefix("/") else { throw AnalysisCredentialError.invalidScope }
+            let scope = try AnalysisCredentialScope(dataDirectory: URL(fileURLWithPath: request.dataDirectory), task: request.task, provider: request.provider, endpoint: request.endpoint, authentication: request.authentication)
+            let store = AnalysisCredentialStore()
+            let result: [String: Any]
+            switch request.operation ?? "read" {
+            case "read": result = ["key": try store.read(scope)]
+            case "status":
+                let stored = try store.contains(scope)
+                var status: [String: Any] = ["stored": stored, "readable": false]
+                if stored {
+                    do { _ = try store.read(scope); status["readable"] = true }
+                    catch { status["errorCode"] = (error as? AnalysisCredentialError ?? .unavailable).code }
+                }
+                result = status
+            default: throw AnalysisCredentialError.invalidScope
+            }
+            var data = try JSONSerialization.data(withJSONObject: result, options: [.sortedKeys]); data.append(0x0a)
+            try FileHandle.standardOutput.write(contentsOf: data)
+        } catch {
+            let failure = error as? AnalysisCredentialError ?? .unavailable
+            if let data = try? JSONSerialization.data(withJSONObject: ["error": ["code":failure.code]]) {
+                try? FileHandle.standardOutput.write(contentsOf: data)
+            }
+            let message = failure.localizedDescription
+            try? FileHandle.standardError.write(contentsOf: Data((message + "\n").utf8)); exit(1)
+        }
     }
 }

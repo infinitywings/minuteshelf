@@ -84,6 +84,29 @@ test('failed analysis retries reuse completed stages while retaining raw respons
   const second = start(f, { retryRunId: first.id }); assert.equal(second.id, first.id); await idle(f.manager);
   assert.equal(f.manager.result(f.meeting.id, first.id).job.status, 'ready'); assert.equal(f.calls.prepare, 1); assert.equal(attempts, 2);
 });
+test('retry after a visual connection failure preserves local transcription and skips ASR', async t => {
+  let prepares = 0, transcribes = 0, visuals = 0;
+  const f = fixture(t, {
+    prepareMedia: async ({ runDirectory }) => {
+      prepares++; fs.mkdirSync(runDirectory,{recursive:true}); fs.writeFileSync(path.join(runDirectory,'frame.png'),'synthetic image');
+      return { audio:[{path:'audio.wav',source:'system'}], frames:[{path:'frame.png',startMs:1000,endMs:3000,sourceMs:1000}], uncertainties:[] };
+    },
+    transcribeLocal: async () => { transcribes++; return {segments:JSON.parse(transcript),uncertainties:[]}; },
+    generate: async ({config}) => {
+      if(config.task==='vision') { if(++visuals===1) throw new Error('Synthetic connection rejected'); return {text:JSON.stringify({title:'Fixture',contentType:'slide',visibleFacts:['Synthetic label'],uncertainties:[]}),provider:'chatgpt-plan',model:'test-model'}; }
+      return response();
+    }
+  });
+  const settings=preferences();settings.uploads.images=true;
+  settings.tasks.transcription={provider:'local-qwen',model:'synthetic-stt',endpoint:'',authentication:'none'};
+  settings.tasks.vision={provider:'chatgpt-plan',model:'test-model',endpoint:'',authentication:'subscription-oauth-token'};f.setSettings(settings);
+  const first=start(f);await idle(f.manager);
+  assert.equal(first.status,'failed');assert.equal(first.stage,'visual');assert(first.completedStages.includes('transcript'));
+  const file=path.join(f.store.dir(f.meeting.id),'outputs',first.id,'transcript.jsonl'),before=fs.readFileSync(file);
+  start(f,{retryRunId:first.id});await idle(f.manager);
+  assert.equal(f.manager.result(f.meeting.id,first.id).job.status,'ready');assert.equal(transcribes,1);assert.equal(prepares,1);
+  assert.deepEqual(fs.readFileSync(file),before);assert.equal(fs.readFileSync(f.original,'utf8'),'original media sentinel');
+});
 test('changed transcript refuses checkpoint reuse instead of mixing evidence runs', async t => {
   const f = fixture(t); const job = start(f); await idle(f.manager);
   assert.throws(() => start(f, { retryRunId: job.id, transcript: 'Changed imported transcript.' }), /changed/);

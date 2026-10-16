@@ -26,10 +26,8 @@
     const tasks = state.settings?.tasks;
     $('analysis-models').textContent = tasks ? Object.entries(tasks).map(([task, config]) => `${names[task]}: ${config.provider}${config.model ? ` · ${config.model}` : ''}`).join('  |  ') : '';
     $('analysis-import').hidden = tasks?.transcription.provider !== 'imported-transcript';
-    $('analysis-install').hidden = !['local-qwen', 'local-mimo'].includes(tasks?.transcription.provider);
     const running = state.jobs.find(job => ['queued', 'processing'].includes(job.status));
     $('analysis-start').disabled = state.recording || Boolean(running) || state.installation?.status === 'installing';
-    $('analysis-install').disabled = state.recording || state.busy;
     status(state.settingsError || (state.installation?.status === 'installing' ? state.installation.message : state.recording ? 'Save the recording before analysis. Background analysis pauses when a new recording starts.' : running ? `${running.stage.replace(/-/g, ' ')} · ${Math.round(running.progress * 100)}%${running.detail ? ` · ${running.detail}` : ''}` : state.installation?.message || 'Analysis starts only when you confirm. Originals stay in this meeting’s folder.'));
     updateList('analysis-jobs', state.jobs, root => {
       root.replaceChildren();
@@ -119,13 +117,6 @@
   }
   $('analysis-start').onclick = guarded(() => beginReview());
   $('analysis-settings').onclick = () => { if (!sendNativeCommand('settings')) status('Open the installed MinuteShelf app and choose Settings → Analysis to configure providers and credentials.'); };
-  $('analysis-install').onclick = guarded(async () => {
-    review = null; $('analysis-review-error').textContent = ''; $('analysis-review-confirm').disabled = false;
-    $('analysis-review-details').textContent = 'This downloads a private Python/MLX runtime and the selected speech model from package and model repositories. Model weights can take several GB. No meeting audio is uploaded. Python 3.11 or later is required. Setup pauses if you start recording.';
-    $('analysis-review-confirm').textContent = 'Download & install';
-    $('analysis-review-confirm').onclick = guarded(async () => { $('analysis-review').close(); await post('/api/analysis/runtime-install', {}); await poll(); });
-    $('analysis-review').showModal();
-  });
   $('analysis-review-cancel').onclick = () => { review = null; $('analysis-review').close(); };
   window.meetingAnalysis = {
     setAvailable(value) { available = value; },
