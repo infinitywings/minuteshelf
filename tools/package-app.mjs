@@ -113,8 +113,12 @@ CONNECT AND ANALYZE
 Open Settings > Analysis > Connect Codex, then finish ChatGPT sign-in in your browser.
 Use Check Connection to check the saved sign-in. Disconnect removes this app's sign-in.
 Credentials use this app's macOS Keychain scope. Connecting does not upload meeting content.
+After an update, a saved API key or Claude Code token may need renewed Keychain consent.
+Use Authorize Access in that provider's settings, confirm the requesting app is MinuteShelf,
+then check for Background access verified. Enter passwords only in the macOS dialog.
 Choose providers and permitted sources in Settings > Analysis, then start analysis from a saved meeting.
 Local MLX transcription requires Python 3.11+ and explicit runtime/model installation.
+Save the speech model, then use Settings > Analysis > Speech recognition > Install / Update Local STT.
 Claude Code requires its official native runtime. Saving preferences does not start analysis or uploads.
 
 YOUR RECORDINGS

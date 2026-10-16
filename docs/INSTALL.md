@@ -1,10 +1,10 @@
 # Install or update MinuteShelf
 
-Version **0.1.12 development preview** supports Apple Silicon Macs running macOS 15 or later. Download the DMG, ZIP, installation notes, and SHA-256 file from the [GitHub release](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12).
+Version **0.1.13 development preview** supports Apple Silicon Macs running macOS 15 or later. Download the DMG, ZIP, installation notes, and SHA-256 file from the [GitHub release](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.13).
 
 ## New installation
 
-1. Download `MinuteShelf-0.1.12-macOS-arm64.dmg`.
+1. Download `MinuteShelf-0.1.13-macOS-arm64.dmg`.
 2. Open it and drag **MinuteShelf.app** to **Applications**.
 3. Eject the disk image and open **MinuteShelf** from Applications.
 4. Use **Settings → General → Permissions** to request access when needed. Grant Screen & System Audio Recording for screen capture, and Microphone if you enable that source. Accessibility is not required by the current recorder.
@@ -22,7 +22,7 @@ If macOS blocks the first launch and you trust this copy, attempt to open it onc
 For a terminal checksum check, put the downloaded assets and `.sha256` file in the same directory and run:
 
 ```sh
-shasum -a 256 -c MinuteShelf-0.1.12-macOS-arm64.sha256
+shasum -a 256 -c MinuteShelf-0.1.13-macOS-arm64.sha256
 ```
 
 The checksum file lists both the DMG and ZIP; a missing-file message means the corresponding asset has not been downloaded.
@@ -46,6 +46,12 @@ The new app retains these compatibility identifiers:
 The app does not move or rewrite old meetings to perform the rename. `MEETING_DATA` overrides still refer to the same selected location. Keeping the credential scope does not bypass Keychain approval: macOS may ask you to authorize the updated app, and you can use the provider settings to reconnect if needed.
 
 The old and new app names share a bundle identifier. Keeping both as launchable installed copies can confuse launch and permission attribution. Later MinuteShelf updates should replace the existing MinuteShelf.app after it has quit.
+
+## Analysis settings after updating
+
+Use **Settings → Analysis → Check Connection** to verify the existing Codex sign-in. For a saved API key or Claude Code token, use **Authorize Access…** if the app reports that Keychain needs permission for this version. Verify the requesting app is MinuteShelf and enter passwords only in the macOS dialog. **Background access verified** confirms the installed app's reader can access that saved credential; it does not confirm model access or quota. A new ad-hoc build may need consent again.
+
+To install local Qwen/MiMo speech recognition, save the selected model and use **Settings → Analysis → Speech recognition → Install / Update Local STT…**. Downloading requires separate confirmation. The control waits for recording, analysis, export, or another installation to finish; returning to Analysis refreshes that state.
 
 ## Screen access still fails after an update
 

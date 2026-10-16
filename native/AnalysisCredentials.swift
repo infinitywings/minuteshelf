@@ -222,10 +222,14 @@ enum AnalysisCredentialProbe {
 // Separate ad-hoc helpers can fail Keychain authorization after an update.
 enum AnalysisCredentialCommand {
     private static func codeMatches(_ pid: pid_t, executable: URL) -> Bool {
-        var expected: SecStaticCode?, requirement: SecRequirement?, running: SecCode?
+        var expected: SecStaticCode?, requirement: SecRequirement?
         guard SecStaticCodeCreateWithPath(executable as CFURL, [], &expected) == errSecSuccess, let expected,
-              SecCodeCopyDesignatedRequirement(expected, [], &requirement) == errSecSuccess, let requirement,
-              SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary, [], &running) == errSecSuccess,
+              SecCodeCopyDesignatedRequirement(expected, [], &requirement) == errSecSuccess, let requirement else { return false }
+        return codeMatches(pid, requirement: requirement)
+    }
+    private static func codeMatches(_ pid: pid_t, requirement: SecRequirement) -> Bool {
+        var running: SecCode?
+        guard SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid: NSNumber(value: pid)] as CFDictionary, [], &running) == errSecSuccess,
               let running else { return false }
         return SecCodeCheckValidity(running, [], requirement) == errSecSuccess
     }
@@ -236,16 +240,29 @@ enum AnalysisCredentialCommand {
         return info.kp_eproc.e_ppid
     }
     private static func trustedCaller() -> Bool {
-        var bundle = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.resolvingSymlinksInPath()
-        while bundle.pathExtension != "app" && bundle.path != "/" { bundle.deleteLastPathComponent() }
-        guard bundle.pathExtension == "app" else { return false }
-        let main = bundle.appendingPathComponent("Contents/MacOS/MeetingArchive"), caller = getppid()
-        if codeMatches(caller, executable: main) { return true }
+        // argv[0] belongs to the launcher. It must never select the code or
+        // bundle whose signature becomes our trust anchor.
+        // libproc's PROC_PIDPATHINFO_MAXSIZE expression is not imported by Swift.
+        var path = [CChar](repeating: 0, count: 4 * Int(MAXPATHLEN))
+        let length = proc_pidpath(getpid(), &path, UInt32(path.count))
+        guard length > 0, Int(length) < path.count else { return false }
+        let executable = URL(fileURLWithPath: String(cString: path)).standardizedFileURL.resolvingSymlinksInPath()
+        guard let argument = CommandLine.arguments.first, argument.hasPrefix("/"),
+              URL(fileURLWithPath: argument).standardizedFileURL.resolvingSymlinksInPath() == executable else { return false }
+        let bundle = executable.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+        guard bundle.pathExtension == "app", bundle.appendingPathComponent("Contents/MacOS/MeetingArchive") == executable else { return false }
+        var ownCode: SecCode?, ownStatic: SecStaticCode?, mainRequirement: SecRequirement?
+        guard SecCodeCopySelf([], &ownCode) == errSecSuccess, let ownCode,
+              SecCodeCheckValidity(ownCode, [], nil) == errSecSuccess,
+              SecCodeCopyStaticCode(ownCode, [], &ownStatic) == errSecSuccess, let ownStatic,
+              SecCodeCopyDesignatedRequirement(ownStatic, [], &mainRequirement) == errSecSuccess, let mainRequirement else { return false }
+        let caller = getppid()
+        if codeMatches(caller, requirement: mainRequirement) { return true }
         // A signed interpreter alone is not enough: the bundled Node must
         // itself have been launched by this app, not an unrelated local script.
         guard codeMatches(caller, executable: bundle.appendingPathComponent("Contents/Helpers/node")),
               let owner = parent(of: caller) else { return false }
-        return codeMatches(owner, executable: main)
+        return codeMatches(owner, requirement: mainRequirement)
     }
     private struct Request: Decodable {
         let operation: String?
@@ -268,7 +285,8 @@ enum AnalysisCredentialCommand {
                 let kind = info.st_mode & mode_t(S_IFMT)
                 return kind == mode_t(S_IFIFO) || kind == mode_t(S_IFSOCK)
             }
-            guard Array(CommandLine.arguments.dropFirst()) == arguments, isPrivatePipe(STDIN_FILENO), isPrivatePipe(STDOUT_FILENO), trustedCaller() else { throw AnalysisCredentialError.invalidScope }
+            guard Array(CommandLine.arguments.dropFirst()) == arguments, isPrivatePipe(STDIN_FILENO), isPrivatePipe(STDOUT_FILENO) else { throw AnalysisCredentialError.invalidScope }
+            guard trustedCaller() else { throw AnalysisCredentialError.trustUnavailable }
             var input = Data()
             while let chunk = try FileHandle.standardInput.read(upToCount: 4096), !chunk.isEmpty {
                 input.append(chunk); guard input.count <= 32768 else { throw AnalysisCredentialError.invalidScope }

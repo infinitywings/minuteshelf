@@ -12,7 +12,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12">Download for Mac</a> ·
+  <a href="https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.13">Download for Mac</a> ·
   <a href="#get-started">Get started</a> ·
   <a href="#a-quick-look">Screenshots</a> ·
   <a href="#choose-your-models">Models</a> ·
@@ -27,7 +27,7 @@ MinuteShelf keeps the original meeting on your Mac, then helps you revisit it wi
 
 **Privacy by default, model choice by task.** Capture and storage are local. Use local models for local inference, or explicitly allow a remote provider for STT, VLM, or LLM work. Remote analysis sends only the content categories you approve; signing in or saving a model choice does not upload a meeting.
 
-**Status:** 0.1.12 development preview. The app is now **MinuteShelf**. Its legacy bundle identifier and storage path are retained so existing Meeting Archive installations can keep their data and credential scope. Recording and playback have passed bounded real-world tests. Analysis adapters are implemented, with accuracy and real cloud-account validation still in progress.
+**Status:** 0.1.13 development preview. This update repairs Codex sign-in visibility during analysis, hardens background Keychain access, and moves local speech setup into Settings. Its legacy bundle identifier and storage path are retained so existing Meeting Archive installations can keep their data and credential scope. Recording and playback have passed bounded real-world tests. Analysis accuracy and broader cloud-account validation remain in progress.
 
 ## Record once. Choose how to understand it.
 
@@ -76,7 +76,7 @@ Closing the app window leaves recording running. Quitting asks to stop and save.
 
 ### Download and install
 
-Download the [Apple Silicon DMG](https://github.com/infinitywings/minuteshelf/releases/download/v0.1.12/MinuteShelf-0.1.12-macOS-arm64.dmg), open it, and drag **MinuteShelf** into **Applications**. A ZIP and SHA-256 checksums are available on the [release page](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.12). Requires an M-series Mac and macOS 15+; Node.js and Codex are included.
+Download the [Apple Silicon DMG](https://github.com/infinitywings/minuteshelf/releases/download/v0.1.13/MinuteShelf-0.1.13-macOS-arm64.dmg), open it, and drag **MinuteShelf** into **Applications**. A ZIP and SHA-256 checksums are available on the [release page](https://github.com/infinitywings/minuteshelf/releases/tag/v0.1.13). Requires an M-series Mac and macOS 15+; Node.js and Codex are included.
 
 This development preview is **ad-hoc signed, without Apple notarization**. macOS may block the first launch; if you trust the downloaded copy, use **System Settings → Privacy & Security → Open Anyway**. You do not need to disable Gatekeeper.
 
@@ -127,7 +127,7 @@ Configure **STT**, **VLM**, and **LLM** independently in **Settings → Analysis
 
 | Task | Implemented options | Setup |
 | --- | --- | --- |
-| **STT — audio → transcript** | **Qwen3-ASR-1.7B MLX** by default; MiMo-V2.5-ASR MLX, whisper.cpp, a dedicated STT API, or transcript import | Qwen/MiMo require Python 3.11+ and explicit **Install Local STT…** setup. Whisper requires a compatible local runtime and model. API transcription needs an endpoint and any required credentials. |
+| **STT — audio → transcript** | **Qwen3-ASR-1.7B MLX** by default; MiMo-V2.5-ASR MLX, whisper.cpp, a dedicated STT API, or transcript import | Qwen/MiMo require Python 3.11+ and **Install / Update Local STT…** in Settings → Analysis → Speech recognition. Whisper requires a compatible local runtime and model. API transcription needs an endpoint and any required credentials. |
 | **VLM — selected frames → visual evidence** | Codex, Claude Code, Anthropic API, OpenAI-compatible endpoints, local Ollama | Select an image-capable model available to your account/runtime. Remote image processing requires image-upload permission. |
 | **LLM — evidence + context → notes** | Codex, Claude Code, Anthropic API, OpenAI-compatible endpoints, local Ollama | Select independently from the VLM. Review permissions for transcripts, notes, and any included background documents. |
 

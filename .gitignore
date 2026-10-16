@@ -68,6 +68,7 @@
 !/server/meeting-lifecycle.js
 !/server/project-store.js
 !/server/rka-context.js
+!/test/AnalysisCredentialCallerTests.swift
 !/test/AnalysisCredentialsKeychainTests.swift
 !/test/AnalysisCredentialsTests.swift
 !/test/AnalysisPreferencesTests.swift
@@ -119,6 +120,7 @@
 !/tools/test-capture-diagnostics-native.mjs
 !/tools/test-claude-models.mjs
 !/tools/test-codex-connection.mjs
+!/tools/test-credential-caller.mjs
 !/tools/test-display-selection-native.mjs
 !/tools/test-export.mjs
 !/tools/test-native-regressions.mjs
