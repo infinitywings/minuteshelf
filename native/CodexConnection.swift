@@ -8,6 +8,10 @@ enum CodexConnectionState: String { case idle, checking, awaitingBrowser, connec
 // Authentication and read-only catalog discovery. No thread, inference, or
 // filesystem-tool methods are exposed. Codex owns OAuth and its Keychain entry.
 enum CodexAuthProtocol {
+    static let arguments = ["app-server", "--listen", "stdio://", "-c", "cli_auth_credentials_store=\"keyring\"", "-c", "forced_login_method=\"chatgpt\""]
+        + ["apps", "plugins", "remote_plugin", "hooks", "shell_tool", "unified_exec", "skill_mcp_dependency_install"]
+            .flatMap { ["-c", "features.\($0)=false"] }
+        + ["-c", "features.skip_host_skill_discovery=true", "-c", "skills.bundled.enabled=false", "-c", "project_doc_max_bytes=0"]
     static let methods: Set<String> = ["initialize", "account/read", "account/login/start", "account/login/cancel", "account/logout", "model/list"]
     static func authorizationURL(_ text: String) -> URL? {
         guard text.utf8.count <= 16384, let parts = URLComponents(string: text),
@@ -291,7 +295,7 @@ private enum CodexConnectionError: LocalizedError {
         accountEmail = CodexAuthProtocol.displayText(account["email"], limit: 320)
         planType = CodexAuthProtocol.displayText(account["planType"], limit: 64)
         state = .connected
-        detail = "Signed in with ChatGPT. Account connection is ready; meeting analysis is not connected yet."
+        detail = "Signed in with ChatGPT. Ready to use the selected Codex models for meeting analysis."
     }
     private func finishLogin(success: Bool) async throws {
         let token = operation
@@ -325,7 +329,7 @@ private enum CodexConnectionError: LocalizedError {
         generation = UUID(); let epoch = generation
         child = process; input = stdin; output = stdout; errors = stderr; buffer.removeAll()
         process.executableURL = executable
-        process.arguments = ["app-server", "--listen", "stdio://", "-c", "cli_auth_credentials_store=\"keyring\"", "-c", "forced_login_method=\"chatgpt\""]
+        process.arguments = CodexAuthProtocol.arguments
         process.currentDirectoryURL = codexHome
         process.environment = CodexAuthProtocol.environment(home: FileManager.default.homeDirectoryForCurrentUser,
                                                             temporary: FileManager.default.temporaryDirectory, codexHome: codexHome)

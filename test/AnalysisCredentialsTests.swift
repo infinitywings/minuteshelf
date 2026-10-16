@@ -1,12 +1,15 @@
 import Foundation
+import Security
 
 private final class MemoryCredentialBackend: AnalysisCredentialBackend {
     var data: [String: Data] = [:]
     var reads = 0
+    var authorizations: [String] = []
     func contains(_ scope: AnalysisCredentialScope) throws -> Bool { data[scope.account] != nil }
     func read(_ scope: AnalysisCredentialScope) throws -> Data { reads += 1; guard let value = data[scope.account] else { throw AnalysisCredentialError.missing }; return value }
     func save(_ value: Data, scope: AnalysisCredentialScope) throws { data[scope.account] = value }
     func delete(_ scope: AnalysisCredentialScope) throws { data.removeValue(forKey: scope.account) }
+    func authorize(_ scope: AnalysisCredentialScope) throws { guard data[scope.account] != nil else { throw AnalysisCredentialError.missing }; authorizations.append(scope.account) }
 }
 
 @main struct AnalysisCredentialsTests {
@@ -63,6 +66,13 @@ private final class MemoryCredentialBackend: AnalysisCredentialBackend {
             try rejects { try isolated.save(key, scope: first) }
         }
         try check(isolated.read(first) == "replacement-synthetic-secret", "Invalid key cannot overwrite previous key")
+        try isolated.save("oauth-synthetic-secret", scope: oauth)
+        try isolated.authorize(first)
+        try check(memory.authorizations == [first.account], "Authorization must target exactly the selected credential scope")
+        try check(isolated.read(first) == "replacement-synthetic-secret" && isolated.read(oauth) == "oauth-synthetic-secret", "Authorization preserves the selected value and other credentials")
+        try check(AnalysisCredentialError.from(errSecInteractionNotAllowed).code == "keychain_authorization_required", "A blocked Keychain read must not be reported as a missing token")
+        try check(AnalysisCredentialError.from(errSecItemNotFound).code == "credential_missing", "Missing credentials retain a separate error")
+        try check(AnalysisCredentialError.from(errSecUserCanceled).code == "keychain_cancelled", "User cancellation preserves its reason")
         try isolated.delete(first); try isolated.delete(first)
         try check(!isolated.contains(first), "Delete is idempotent")
         try check(first.account.count == 64 && !first.account.contains(root.lastPathComponent), "Keychain scope hides private directory")

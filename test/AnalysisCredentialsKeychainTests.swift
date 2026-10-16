@@ -1,8 +1,8 @@
 import Foundation
 import Security
 
-// Run only from an isolated signed .app with the same executable copied and
-// separately signed as Contents/Helpers/analysis-credentials. All values are
+// Run only from an isolated signed .app. A second process uses the same
+// signed executable as the foreground credential owner. All values are
 // synthetic. Creating a temporary Keychain may show a macOS authorization
 // dialog even when interaction is disabled. Never run this in normal CI or
 // without a human explicitly agreeing to the interactive integration check.
@@ -42,7 +42,7 @@ import Security
         print("synthetic item saved")
         guard try store.contains(scope), try store.read(scope) == synthetic else { throw AnalysisCredentialError.unavailable }
         let child = Process(), output = Pipe()
-        child.executableURL = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/analysis-credentials")
+        child.executableURL = Bundle.main.executableURL
         child.arguments = ["--read-test-keychain", path]; child.standardOutput = output
         try child.run(); child.waitUntilExit()
         guard child.terminationStatus == 0,
@@ -51,6 +51,6 @@ import Security
         guard try store.read(scope) == "replacement-synthetic-key" else { throw AnalysisCredentialError.unavailable }
         try store.delete(scope)
         guard try !store.contains(scope) else { throw AnalysisCredentialError.unavailable }
-        print("Keychain integration passed: scoped save/status/read, separately signed helper ACL, update, delete. Only a temporary Keychain was used.")
+        print("Keychain integration passed: scoped save/status/read, same-identity background reader, update, delete. Only a temporary Keychain was used.")
     }
 }

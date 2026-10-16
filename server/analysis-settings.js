@@ -55,12 +55,12 @@ function authorize(config, settings, kinds) {
   if (settings.networkPolicy !== 'selected-remote-allowed') throw fail('Enable selected remote providers in Settings → Analysis before using this model.');
   for (const kind of kinds) if (!settings.uploads[kind]) throw fail(`Allow ${kind === 'transcriptsAndNotes' ? 'transcripts and notes' : kind === 'contextDocuments' ? 'context documents' : kind} in Settings → Analysis before sending them to this provider.`);
 }
-function readCredential({ config, dataDirectory, signal, operation = 'read', binary = path.resolve(__dirname, '../../../Helpers/analysis-credentials'), spawnProcess = spawn }) {
+function readCredential({ config, dataDirectory, signal, operation = 'read', binary = path.resolve(__dirname, '../../../MacOS/MeetingArchive'), spawnProcess = spawn }) {
   if (!['api-key', 'claude-code-oauth-token'].includes(config.authentication)) return Promise.resolve(operation === 'status' ? { stored: false, required: false } : undefined);
   if (!fs.existsSync(binary)) return Promise.reject(fail('The credential helper is missing. Install the complete MinuteShelf app.'));
   return new Promise((resolve, reject) => {
     let output = '', closed = false;
-    const child = spawnProcess(binary, [], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } });
+    const child = spawnProcess(binary, ['--credential-helper'], { stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: '/usr/bin:/bin' } });
     const finish = (error, value) => { if (closed) return; closed = true; clearTimeout(timer); signal?.removeEventListener('abort', abort); error ? reject(error) : resolve(value); };
     const abort = () => { child.kill('SIGKILL'); finish(fail('Credential read cancelled.')); };
     const timer = setTimeout(() => { child.kill('SIGKILL'); finish(fail('Keychain did not respond. Unlock it and save the credential again in Settings → Analysis.')); }, 10000);
@@ -70,10 +70,23 @@ function readCredential({ config, dataDirectory, signal, operation = 'read', bin
     child.stdout.on('data', chunk => { output += chunk; if (Buffer.byteLength(output) > 16384) { child.kill('SIGKILL'); finish(fail('Invalid credential helper response.')); } });
     child.stdin.on('error', () => {});
     child.on('close', code => {
-      if (code !== 0) return finish(fail('No readable credential is saved for this task, provider, endpoint, and authentication. Save it again in Settings → Analysis.'));
+      if (code !== 0) {
+        let errorCode; try { errorCode = JSON.parse(output).error?.code; } catch {} output = '';
+        const task = { vision:'Screen understanding', summary:'Meeting summaries', transcription:'Speech recognition' }[config.task] || 'This task';
+        const messages = {
+          credential_missing: `${task}: no credential is saved for this provider and authentication. Save it in Settings → Analysis.`,
+          keychain_authorization_required: `${task}: the saved credential needs Keychain authorization for this app version. Unlock your login Keychain and choose Authorize Access in Settings → Analysis.`,
+          keychain_unavailable: `${task}: Keychain is unavailable. Unlock your login Keychain, then check access in Settings → Analysis.`,
+          keychain_cancelled: `${task}: Keychain authorization was cancelled. The saved credential was preserved.`,
+          credential_helper_trust: 'The credential helper could not be trusted. Reinstall the complete MinuteShelf app.',
+          credential_invalid: `${task}: the saved credential has an invalid format. Save a replacement in Settings → Analysis.`
+        };
+        const error = fail(messages[errorCode] || `${task}: the credential helper could not read the saved credential. Check Keychain access in Settings → Analysis.`);
+        error.code = Object.hasOwn(messages, errorCode) ? errorCode : 'credential_read'; return finish(error);
+      }
       try {
         const value = JSON.parse(output); output = '';
-        if (operation === 'status') { if (typeof value.stored !== 'boolean') throw new Error(); return finish(null, { stored: value.stored, required: true }); }
+        if (operation === 'status') { if (typeof value.stored !== 'boolean' || typeof value.readable !== 'boolean') throw new Error(); return finish(null, { stored: value.stored, readable: value.readable, required: true }); }
         if (typeof value.key !== 'string' || !/^[\x21-\x7e]{1,8192}$/.test(value.key)) throw new Error();
         finish(null, value.key);
       } catch { finish(fail('Invalid credential helper response.')); }

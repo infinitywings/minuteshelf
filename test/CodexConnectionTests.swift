@@ -198,6 +198,9 @@ private enum FakeCodexServer {
             try check(environment[key] == nil, "Credential/provider/loader environment must not be inherited")
         }
         try check(CodexAuthProtocol.methods.contains("model/list") && !CodexAuthProtocol.methods.contains("thread/start") && !CodexAuthProtocol.methods.contains("turn/start") && !CodexAuthProtocol.methods.contains("command/exec"), "Connection controller must allow catalogs without inference or tool execution")
+        for feature in ["apps", "plugins", "remote_plugin", "hooks", "shell_tool", "unified_exec"] {
+            try check(CodexAuthProtocol.arguments.contains("features.\(feature)=false"), "Account/catalog starts must not enable plugins or tools")
+        }
 
         try await fixture("models-paginated") { connection, home, browsers in
             let originalDetail = connection.detail

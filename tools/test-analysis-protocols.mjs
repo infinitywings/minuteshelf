@@ -57,6 +57,9 @@ async function codex() {
   const temporary = await fs.mkdtemp(path.join(await fs.realpath(os.tmpdir()), 'meeting-codex-protocol-'));
   const home = path.join(temporary, 'codex'); await fs.mkdir(home, { mode: 0o700 }); let runtime;
   try {
+    const cached = path.join(home, 'plugins/cache/synthetic/example/1.0.0/.codex-plugin');
+    await fs.mkdir(cached, { recursive:true });
+    await fs.writeFile(path.join(cached, 'plugin.json'), JSON.stringify({ name:'synthetic', description:'CACHE_INSTRUCTIONS_MUST_NOT_LOAD' }));
     const args = ['app-server', '--listen', 'stdio://', ...configArguments(), '-c', 'features.enable_request_compression=false',
       '-c', 'model_providers.fixture.name="Local synthetic fixture"', '-c', `model_providers.fixture.base_url="${server.url}/v1"`,
       '-c', 'model_providers.fixture.env_key="FIXTURE_CREDENTIAL"', '-c', 'model_providers.fixture.wire_api="responses"',
@@ -71,11 +74,14 @@ async function codex() {
       if (event.method === 'turn/completed') { if (event.params.turn.status !== 'completed') reject(new Error('Synthetic Codex turn failed.')); else finish(); }
     });
     await runtime.request('initialize', { clientInfo: { name: 'meeting_archive_protocol_test', title: 'Synthetic local fixture', version: '0.1.6' }, capabilities: { experimentalApi: false } }); runtime.send({ method: 'initialized' });
+    const effective = await runtime.request('config/read', { includeLayers:false, cwd:temporary });
+    for (const name of ['plugins','remote_plugin','hooks','apps','shell_tool','unified_exec']) assert.equal(effective.config.features[name],false);
     const thread = await runtime.request('thread/start', { model: 'gpt-6.1-sol', modelProvider: 'fixture', cwd: temporary, approvalPolicy: 'never', sandbox: 'read-only', ephemeral: true, baseInstructions: 'Summarize supplied synthetic text only. No tools.' });
     assert.equal(thread.thread.ephemeral, true); assert.equal(thread.sandbox.type, 'readOnly'); assert.equal(thread.approvalPolicy, 'never'); assert.deepEqual(thread.instructionSources, []);
     await runtime.request('turn/start', { threadId: thread.thread.id, input: [{ type: 'text', text: 'A synthetic meeting agreed to test the app.' }], sandboxPolicy: { type: 'readOnly', networkAccess: false } });
     await completed; assert.equal(messages.at(-1), 'Synthetic Codex summary.');
     const inference = server.calls.filter(call => call.path === '/v1/responses'); assert.equal(inference.length, 1); assert.equal(inference[0].usesFakeBearer, true); assert.equal(inference[0].body.tools?.length || 0, 0);
+    assert(!JSON.stringify(inference[0].body).includes('CACHE_INSTRUCTIONS_MUST_NOT_LOAD'));
     console.log('PASS Codex: actual stdio + local Responses SSE, isolated ephemeral thread, zero tools, synthetic credential only.');
   } finally { await runtime?.dispose(); await server.close(); await fs.rm(temporary, { recursive: true, force: true }); }
 }

@@ -99,7 +99,16 @@ function createRecorderServer(options = {}) {
             freeBytes: disk.bavail * disk.bsize, nativeBuilt: fs.existsSync(sessions.binary),
             liveInference: false, processingAvailable: true, mcpEnabled: false });
         }
-        if (url.pathname === '/api/analysis/runtime-install' && req.method === 'POST') return json(res, 202, analysis.installRuntime());
+        if (url.pathname === '/api/analysis/runtime-install' && req.method === 'GET') return json(res, 200, {
+          installation: analysis.install?.state || null,
+          busy: Boolean(analysis.worker || analysis.queue.length || analysis.install?.running || exports.active().length),
+          recording: Boolean(store.active().length)
+        });
+        if (url.pathname === '/api/analysis/runtime-install' && req.method === 'POST') {
+          await body(req);
+          if (server.shuttingDown) return json(res, 503, { error: 'The app is quitting.' });
+          return json(res, 202, analysis.installRuntime());
+        }
         if (url.pathname === '/api/sources' && req.method === 'GET') return json(res, 200, await sessions.sources());
         if (url.pathname === '/api/permissions' && req.method === 'GET') return json(res, 200, await sessions.permissions());
         if (url.pathname === '/api/permissions/request' && req.method === 'POST') return json(res, 200, await sessions.requestPermissions(await body(req)));

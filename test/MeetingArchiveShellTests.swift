@@ -1,14 +1,22 @@
 import Foundation
+import AppKit
+import WebKit
 
-// No NSApplication, user archive, credential store, permission request, or
-// network connection is opened. Compile the actual shell and its dependencies.
+// Default checks do not open NSApplication. --settings-ui uses an isolated
+// Settings window, temporary preferences, and a fake local status service;
+// neither mode reads user archives/credentials or requests permissions/network.
 @main struct MeetingArchiveShellTests {
     static var checks = 0
     static func check(_ condition: @autoclosure () -> Bool, _ message: String) throws {
         guard condition() else { throw NSError(domain: "MeetingArchiveShellTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message]) }
         checks += 1
     }
-    static func main() throws {
+    @MainActor static func main() async throws {
+        if CommandLine.arguments.contains("--settings-ui") {
+            do { try await settingsLifecycle() }
+            catch { fputs("Settings lifecycle regression: \(error.localizedDescription)\n", stderr); exit(1) }
+            return
+        }
         try check(ArchiveMeetingTitle.normalized("  测试 meeting  ") == "测试 meeting", "Unicode names must be preserved and trimmed")
         try check(ArchiveMeetingTitle.normalized("Cafe\u{301}") == "Café", "Names must normalize to NFC")
         try check(ArchiveMeetingTitle.normalized("Family 👨‍👩‍👧‍👦") == "Family 👨‍👩‍👧‍👦", "Valid Unicode joiners must not be mistaken for forbidden control characters")
@@ -60,5 +68,83 @@ import Foundation
         try check(refreshed.contains(where: { $0.key == "project-note:other:note-9" }), "Reassignment must add the new child row")
         try check(refreshed.first(where: { $0.key == "project-note:project:note-0" })?.title == "Renamed note", "Polling must update child titles without changing stable IDs")
         print("MeetingArchiveShellTests: \(checks) checks passed (no UI, permissions, or user data opened).")
+    }
+
+    @MainActor static func settingsLifecycle() async throws {
+        _ = NSApplication.shared
+        NSApp.setActivationPolicy(.accessory)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("meeting-settings-lifecycle-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = try AnalysisPreferencesStore(dataDirectory: directory).save(AnalysisPreferences())
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 600), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let configuration = WKWebViewConfiguration(); configuration.websiteDataStore = .nonPersistent()
+        let shell = MeetingArchiveShell(web: WKWebView(frame: .zero, configuration: configuration), window: window)
+        shell.setDataDirectory(directory)
+        shell.apply(ArchiveShellSnapshot(["version": 1, "view": "home", "connected": true, "busy": false, "projects": [], "meetings": []])!)
+        shell.setInteractionEnabled(true)
+        var reads = 0, installs = 0
+        var status: [String: Any] = [:]
+        shell.localSTTRequest = { install in
+            if install { installs += 1 }
+            else { reads += 1 }
+            return status
+        }
+        shell.showSettings(refresh: false)
+        guard let panel = NSApp.windows.first(where: { $0.title == "MinuteShelf Settings" }),
+              let content = panel.contentView else { throw failure("Settings window was not constructed") }
+        defer { shell.stopCodexConnection(); panel.close(); window.close() }
+        func descendants(_ view: NSView) -> [NSView] { [view] + view.subviews.flatMap(descendants) }
+        guard let tabs = descendants(content).compactMap({ $0 as? NSTabView }).first,
+              let analysis = tabs.tabViewItems.first(where: { $0.identifier as? String == "analysis" }),
+              let analysisView = analysis.view,
+              let installButton = descendants(analysisView).compactMap({ $0 as? NSButton }).first(where: { $0.title == "Install / Update Local STT…" }) else {
+            throw failure("Analysis controls were not constructed")
+        }
+        try check(tabs.selectedTabViewItem?.identifier as? String == "general", "Settings must initially show General")
+        let cases: [(String, [String: Any], [String: Any])] = [
+            ("recording", ["recording": true], ["recording": false]),
+            ("export", ["busy": true], ["busy": false]),
+            ("installation", ["busy": true, "installation": ["status": "installing", "message": "Fixture installing"]],
+                ["busy": false, "installation": ["status": "ready", "message": "Fixture ready"]])
+        ]
+        for (name, active, finished) in cases {
+            // Reproduce opening Settings on General while work is active.
+            tabs.selectTabViewItem(withIdentifier: "general")
+            status = active; let initialReads = reads
+            shell.showSettings()
+            try await eventually("\(name) must initially disable installation") { reads > initialReads && !installButton.isEnabled }
+            try check(analysisView.window == nil, "General must detach the Analysis view to exercise the polling guard")
+            try await Task.sleep(nanoseconds: 2_200_000_000)
+            let hiddenReads = reads
+            status = finished
+            tabs.selectTabViewItem(analysis)
+            try await eventually("Returning to Analysis after \(name) must fetch fresh status and re-enable installation") {
+                reads > hiddenReads && installButton.isEnabled
+            }
+
+            // While Analysis stays visible, existing polling must also recover.
+            tabs.selectTabViewItem(withIdentifier: "general")
+            status = active; let visibleReads = reads
+            tabs.selectTabViewItem(analysis)
+            try await eventually("Visible \(name) must disable installation") { reads > visibleReads && !installButton.isEnabled }
+            status = finished
+            try await eventually("Visible polling must restore installation after \(name)") { installButton.isEnabled }
+        }
+        try check(installs == 0, "Tab activation and polling must only read status, never start installation")
+        print("Settings lifecycle: \(checks) checks passed (recording/export/install recovery, isolated preferences, no model downloads).")
+    }
+
+    static func failure(_ message: String) -> NSError {
+        NSError(domain: "MeetingArchiveShellTests", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+    @MainActor static func eventually(_ message: String, _ condition: () -> Bool) async throws {
+        let deadline = Date().addingTimeInterval(5)
+        while !condition() {
+            guard Date() < deadline else { throw failure(message) }
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        checks += 1
     }
 }
